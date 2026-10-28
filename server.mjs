@@ -45,7 +45,7 @@ export async function createWorkbench(options={}){
  const sessionBusy=id=>Boolean(runs.has(id)||terminals.active?.sessionId===id||mutations.has(id));
  const runBlocked=s=>locked()?'插件或配置操作正在进行，请完成后再开始任务。':sessionBusy(s.id)?'这个会话的任务或终端仍在运行。请等待完成，或先停止它。':runs.size>=maxRuns?`已有 ${maxRuns} 个任务在并行运行。请等其中一个完成，或先停止一个。`:null;
  async function withExclusive(action){if(shuttingDown)throw new PluginError(503,'工作台正在关闭。');if(busy())throw new PluginError(409,'请等待当前任务、终端或配置操作结束。');mutations.add(EXCLUSIVE);try{return await action();}finally{mutations.delete(EXCLUSIVE);}}
- const serverPlugins=new ServerPluginHost({manager:plugins,dataDir,context:{binary,workspaceRoot,getSession:id=>store.get(id),listSessions:()=>[...store.sessions.values()],startTurn,isBusy:busy,isClosing:()=>shuttingDown,withExclusive,runtimeChanged:()=>event({type:'runtime-updated'})}});
+ const serverPlugins=new ServerPluginHost({manager:plugins,dataDir,context:{binary,workspaceRoot,getSession:id=>store.get(id),listSessions:()=>[...store.sessions.values()],startTurn,isBusy:busy,isClosing:()=>shuttingDown,withExclusive,runtimeChanged:()=>event({type:'runtime-updated'}),usageChanged:()=>event({type:'usage-invalidated'})}});
  const effortLevels=['auto','low','medium','high','xhigh','max'];
  const app=express();app.disable('x-powered-by');
  // Only our local reverse proxy may provide a client address; never trust arbitrary X-Forwarded-For chains.
@@ -76,7 +76,24 @@ export async function createWorkbench(options={}){
   void usage.refresh().catch(()=>{});
   res.json({execution,user:req.login.user,csrfToken:req.login.csrfToken,sessions:store.list(),system,account,usage:usage.read(),terminals:terminals.list(),config:{version,release,models:catalog.list(),effortLevels,workspaceRoot,rootOperations:process.env.WORKBENCH_ROOT_OPERATIONS==='1',maxConcurrentRuns:maxRuns,maxMessageLength:30000,usageSource:'official-cli',costBasis:'API 等价估算，非 Pro 账单',privateWorkspace:true,plugins:{safeMode:plugins.safeMode,workshop:Boolean(plugins.workshopUrl),sdkVersion:1}}});
  });
- app.get('/api/usage',async(req,res)=>{await usage.refresh({force:req.query.refresh==='1'}).catch(()=>{});res.json(usage.read());});
+ app.get('/api/usage',async(req,res)=>{
+  const force=req.query.refresh==='1';
+  let choices=null,session=null;
+  if(req.query.choices!==undefined){
+   if(typeof req.query.choices!=='string'||req.query.choices.length>2048)return send(res,400,'选择器参数无效。');
+   try{choices=JSON.parse(req.query.choices);}catch{return send(res,400,'选择器参数无效。');}
+   if(!validChoices(choices))return send(res,400,'选择器参数无效。');
+  }
+  if(req.query.sessionId!==undefined){
+   if(typeof req.query.sessionId!=='string'||!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(req.query.sessionId))return send(res,400,'会话 id 无效。');
+   session=store.get(req.query.sessionId);if(!session)return send(res,404,'会话不存在。');
+  }
+  if(session||choices){
+   const snapshot=await serverPlugins.readUsage({session,choices,refresh:force,inProgress:Boolean(session&&(runs.has(session.id)||terminals.active?.sessionId===session.id))});
+   if(snapshot!==null)return res.json(snapshot);
+  }
+  await usage.refresh({force}).catch(()=>{});res.json(usage.read());
+ });
  app.get('/api/sessions',(req,res)=>res.json(store.list()));
  app.get('/api/events',(req,res)=>{if(clients.size>=24)return send(res,429,'打开的实时连接较多，请关闭多余页面。');res.set({'Content-Type':'text/event-stream','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});res.flushHeaders();const c={res,key:req.login.key,expires:req.login.expires,patches:req.query.patches==='1'};clients.add(c);res.write('retry: 3000\n\n');res.write('data: {"type":"connected"}\n\n');req.on('close',()=>clients.delete(c));});
  let usageTick=0;
@@ -142,7 +159,7 @@ export async function createWorkbench(options={}){
    if(run.cancelRequested||shuttingDown)throw new PluginError(409,'任务启动已取消。');
    notify(s.id,true);
    run.handle=runFactory({cwd,sessionId:s.claudeSessionId||undefined,model:s.model,effort:s.effort||'auto',permissionMode:s.permissionMode,prompt:text.trim(),binary,...extensionOptions,
-    onEvent:e=>{if(e.type==='quota'||e.type==='rate_limit')usage.observe?.(e);if(e.type==='capabilities'&&e.models?.length&&catalog.observe(context,e.models,e.version))event({type:'models',models:catalog.list()});const before=feed.before(s,e,run);applyEvent(s,e,run);serverPlugins.event({session:s,event:e,run});store.schedule(s);if(!feed.after(s,e,run,before))notify(s.id,e.type==='permission');else legacyNotify(s.id);},
+    onEvent:e=>{if(!extensionOptions.configDir&&(e.type==='quota'||e.type==='rate_limit'))usage.observe?.(e);if(e.type==='capabilities'&&e.models?.length&&catalog.observe(context,e.models,e.version))event({type:'models',models:catalog.list()});const before=feed.before(s,e,run);applyEvent(s,e,run);serverPlugins.event({session:s,event:e,run});store.schedule(s);if(!feed.after(s,e,run,before))notify(s.id,e.type==='permission');else legacyNotify(s.id);},
     onExit:finish,
    });
    if(run.cancelRequested||shuttingDown)run.handle?.stop();

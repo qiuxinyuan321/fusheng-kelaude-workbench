@@ -81,11 +81,14 @@
 | `onEvent(payload)` | 按原运行顺序接收事件；不得把未知或旧轮次事件写入当前检查点 |
 | `onExit(payload)` / `onStop(payload)` | 记录结束、手动停止或服务中断；是否恢复属于插件策略 |
 | `executionStatus()` | 返回 `{ready: true \| false \| null, label, detail}`，仅报告就绪状态，不暴露凭据 |
+| `readUsage({session,choice,refresh,inProgress})` | 可选，返回当前执行配置的额度快照（可带 `contextLabel`），或 `null` 交给原有单账号监控。新对话尚未创建时 `session` 为 `null`；`choice` 仅含本插件的输入框选项。`refresh` 请求强制刷新；`inProgress` 表示该会话仍有任务或终端，快照应以实际执行账号为准。两个插件同时返回快照时拒绝合并 |
 | `close()` | 停止插件自己的队列与监控，等待必要持久化，不影响其他插件 |
 
 `context` 提供该插件私有 `dataDir`、`binary`、`workspaceRoot`、`getSession`、`listSessions`、`startTurn`、`isBusy`、`isClosing`、`withExclusive`、`isActive` 和 `runtimeChanged()`。改变登录状态或执行设置后调用 `runtimeChanged()`，通知页面重新读取就绪状态，申请了 `backend` 的插件界面也会收到 `runtime` 事件；宿主聚合的结果通过 `bootstrap.execution` 提供。`isBusy()` 在任何任务、终端或文件/配置操作进行时为真；`withExclusive(fn)` 要等它们全部结束才执行，执行期间宿主拒绝新任务。恢复启动必须走 `startTurn`，继续复用底座的账号预检、按会话的运行占位、并行上限与原有权限模式；不要另起绕过宿主的任务进程。
 
 后端数据在 `<WORKBENCH_DATA>/server-plugin-data/<id>/`，与普通 SDK 的 256 KB `storage` 分开。账号元数据和续跑检查点使用原子 JSON 写入；官方 CLI 自己管理额外账号配置内的认证材料。只有本插件所需的状态通过受权限控制的 API 返回给界面，不把原始会话或认证材料作为通用 SDK 数据提供。
+
+`context.usageChanged()` 通知页面重新读取当前会话额度。页面通过 `GET /api/usage?sessionId=<id>` 获取对应执行配置的快照；新对话或第一条消息尚未发送的选择可另带 `choices`（JSON 编码的 `{ pluginId: value }`，格式与消息请求相同）。宿主只把属于该插件的选项交给它。不带会话和选项时仍返回原有配置的额度。独立配置的运行事件不写入原有配置的额度缓存。额度查询不改变账号绑定、不执行模型请求。后台推送与旧请求的结果不能覆盖另一会话或新对话选择的显示。
 
 ## 五分钟上手
 

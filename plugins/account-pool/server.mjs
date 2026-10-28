@@ -159,6 +159,22 @@ class AccountPool {
   sessionState(sessionId) { return structuredClone(this.state.bindings[sessionId] || null); }
   ownsSession(session) { return Boolean(this.state.bindings[session?.id]?.transcriptAccountId !== undefined && this.state.bindings[session.id].transcriptAccountId !== PRIMARY_ACCOUNT_ID); }
 
+  async readUsage({ session, choice = null, refresh = false, inProgress = false } = {}) {
+    this.#active();
+    if (!session && choice === AUTO_CHOICE) return { ...unknownQuota(), contextLabel: '自动选择', unavailableReason: '新一轮开始时确定所用账号。' };
+    const chosen = typeof choice === 'string' && choice !== AUTO_CHOICE ? this.#record(choice) : null;
+    if (chosen && !chosen.enabled) throw fail(409, '无法读取停用账号的额度。');
+    const binding = this.state.bindings[session?.id];
+    // While a process is running, use the owner recorded at launch. Idle pinned
+    // sessions show their selected account; automatic sessions show the last owner.
+    const id = (inProgress ? this.runAccounts.get(session?.id) || binding?.transcriptAccountId || chosen?.id : chosen?.id || (binding?.pinned ? binding.accountId : binding?.transcriptAccountId)) || this.state.defaultAccountId;
+    const monitor = this.#monitor(id);
+    if (refresh) await monitor.refresh({ force: true });
+    else void monitor.refresh().catch(() => {});
+    this.#active();
+    return { ...monitor.read(), contextLabel: this.#record(id).label };
+  }
+
   async executionStatus() {
     this.#active();
     if (!this.isBusy()) {

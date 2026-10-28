@@ -297,7 +297,7 @@ export function createPluginHost(ctx) {
   function setPicker(entry, params) {
     const picker = entry.picker;
     if (!picker) fail('这个插件没有声明输入框选择器。');
-    if (params === null) { picker.state = null; renderPicker(entry); return; }
+    if (params === null) { picker.state = null; renderPicker(entry); ctx.onComposerChange?.(); return; }
     if (!params || typeof params !== 'object' || !Array.isArray(params.options) || !params.options.length || params.options.length > 16) fail('选择器需要 1–16 个 options。');
     const options = params.options.map((option, i) => {
       if (!option || typeof option !== 'object' || typeof option.value !== 'string' || !CHOICE.test(option.value)) fail(`options[${i}].value 无效。`);
@@ -326,6 +326,7 @@ export function createPluginHost(ctx) {
       if (!known(item) || !open || (values.get(id) || fallback).value === item.value) picker.local.delete(id);
     }
     renderPicker(entry);
+    ctx.onComposerChange?.();
   }
   function currentPick(picker, sessionId) {
     if (!sessionId) return picker.draft || picker.state.fallback;
@@ -367,6 +368,7 @@ export function createPluginHost(ctx) {
     picker.timer = setTimeout(() => { if (picker.pending?.requestId === requestId) { picker.pending = null; renderPicker(entry); } }, 15000);
     picker.signature = ''; renderPicker(entry);
     deliver(entry, { event: 'composer:change', data: { sessionId, value, requestId } });
+    ctx.onComposerChange?.();
   }
   function replyPicker(entry, params) {
     const picker = entry.picker;
@@ -380,6 +382,7 @@ export function createPluginHost(ctx) {
       ctx.toast(`「${entry.plugin.name}」${message || '没有接受这个选择。'}`, true);
     }
     picker.signature = ''; renderPicker(entry);
+    ctx.onComposerChange?.();
     return true;
   }
   function resize(frame, params) {
@@ -560,6 +563,12 @@ export function createPluginHost(ctx) {
     choices(sessionId) {
       const out = {};
       for (const entry of mounted.values()) { const value = entry.picker?.choices.get(sessionId); if (value) out[entry.plugin.id] = value; }
+      return Object.keys(out).length ? out : null;
+    },
+    usageChoices(sessionId) {
+      if (sessionId) return this.choices(sessionId);
+      const out = {};
+      for (const entry of mounted.values()) if (entry.picker?.state) out[entry.plugin.id] = currentPick(entry.picker, null).value;
       return Object.keys(out).length ? out : null;
     },
     choicesSent(sessionId) { for (const entry of mounted.values()) entry.picker?.choices.delete(sessionId); },

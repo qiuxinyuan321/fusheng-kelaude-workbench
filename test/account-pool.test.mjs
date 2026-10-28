@@ -200,6 +200,19 @@ test('turn-boundary account changes copy only the current official transcript fr
   assert.equal(f.pool.sessionState(SESSION).transcriptAccountId, 'primary');
 });
 
+test('quota follows the executing owner until a pending account preference can take effect', async t => {
+  const f = await fixture(t), other = await f.create('Next account');
+  await f.pool.beforeRun({ session: session(SESSION) });
+  f.usage.set('primary', { fiveHour: { utilization: 100 }, scopes: [] });
+  f.usage.set(other, { fiveHour: { utilization: 20 }, scopes: [] });
+  await f.pool.call('bind', { sessionId: SESSION, accountId: other });
+  assert.equal((await f.pool.readUsage({ session: session(SESSION), inProgress: true })).fiveHour.utilization, 100);
+  assert.equal((await f.pool.readUsage({ session: session(SESSION), choice: other, inProgress: true })).fiveHour.utilization, 100, 'a first-message preference cannot replace the account already executing');
+  assert.equal((await f.pool.readUsage({ session: session(SESSION) })).fiveHour.utilization, 20);
+  await f.pool.call('bind', { sessionId: SESSION, accountId: null });
+  assert.equal((await f.pool.readUsage({ session: session(SESSION) })).fiveHour.utilization, 100, 'automatic routing displays the last owner until the next turn chooses');
+});
+
 test('missing source transcript refuses account changes without publishing a new owner', async t => {
   const f = await fixture(t);
   const other = await f.create('第二账号');

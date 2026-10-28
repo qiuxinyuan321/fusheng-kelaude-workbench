@@ -2,7 +2,7 @@
   "id": "account-pool",
   "type": "plugin",
   "name": "多账号轮询",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "可选的官方账号配置管理：独立登录、会话绑定、逐轮轮询与按额度选择。停用后停止新路由，凭据始终由官方 CLI 管理。",
   "author": "浮生氪劳德工作台",
   "license": "MIT",

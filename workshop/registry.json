@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "name": "浮生氪劳德工作台 · 创意工坊",
-  "updatedAt": "2026-10-27T19:07:53.273Z",
+  "updatedAt": "2026-10-28T02:26:35.406Z",
   "items": [
     {
       "id": "account-pool",
       "type": "plugin",
       "name": "多账号轮询",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "可选的官方账号配置管理：独立登录、会话绑定、逐轮轮询与按额度选择。停用后停止新路由，凭据始终由官方 CLI 管理。",
       "author": "浮生氪劳德工作台",
       "tags": [

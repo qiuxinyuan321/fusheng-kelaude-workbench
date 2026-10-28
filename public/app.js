@@ -1,6 +1,7 @@
 import { createThemeController, cssToHex, xtermTheme, monacoTheme } from './themes.js';
 import { createPluginHost } from './plugin-host.js';
 import { createWorkshop } from './workshop.js';
+import { createUsageState } from './usage-state.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -103,6 +104,7 @@ function showLogin(error = '') {
   preserveDraft(); state.activeId = null; state.session = null; state.sessions = []; state.selectionVersion++; ui.renderedFor = null; resetLive(); state.draftLoaded = false;
   $('#message-input').value = ''; $('#session-search').value = ''; $('#messages').replaceChildren(); $('#session-list').replaceChildren();
   state.authenticated = false; state.source?.close(); state.source = null; state.connected = false;
+  usageContextKey = null; quotaState.select(null);
   ide.terminalSource?.close(); ide.terminalSource = null; ide.xterm?.dispose(); ide.xterm = null; ide.fit = null; ide.terminal = null;
   clearTimeout(state.refreshTimer); state.refreshTimer = null; ui.attention = null; document.title = '浮生氪劳德工作台'; setFavicon(null);
   plugins.unload(); workshop.close(); switchView('chat');
@@ -136,7 +138,8 @@ async function refreshBootstrap() {
   if (!state.authenticated) return;
   state.sessions = Array.isArray(data.sessions) ? data.sessions : []; state.system = data.system ?? state.system;
   state.account = data.account ?? state.account; state.execution = data.execution ?? null; state.config = data.config || state.config; state.lastBootstrap = Date.now(); renderVersion();
-  if (data.usage) ide.usage = data.usage;
+  if (data.usage) quotaState.acceptDefault(data.usage);
+  if (state.activeId || plugins.usageChoices(state.activeId)) void quotaState.refresh().catch(() => {});
   configureEffort(); renderUsage();
   renderSessions(); renderServer(); renderTitleMeta(); updateControls();
   return data;
@@ -167,7 +170,8 @@ function connectEvents() {
     if (data.type === 'session-patch') { onPatch(data); return; }
     if (data.type === 'runtime-updated') { refreshBootstrap().catch(() => {}); plugins.runtimeChanged(); }
     if (data.type === 'system') { state.system = data.system; renderServer(); plugins.system(); }
-    if (data.type === 'usage') { ide.usage = data.usage; renderUsage(); renderNotices(); plugins.usage(); }
+    if (data.type === 'usage') { if (state.activeId || plugins.usageChoices(state.activeId)) void quotaState.refresh().catch(() => {}); else quotaState.acceptDefault(data.usage); }
+    if (data.type === 'usage-invalidated') void quotaState.refresh().catch(() => {});
     if (data.type === 'models' && Array.isArray(data.models)) { state.config.models = data.models; configureEffort(); }
     if (data.type === 'terminal-updated' || data.type === 'terminal' || data.type === 'terminals') refreshTerminals().catch(() => {});
     if (data.type === 'session-updated') { if (data.summary) applySummary(data.summary); scheduleSnapshot(data.sessionId, Boolean(data.summary)); }
@@ -209,6 +213,7 @@ function acceptSession(session) {
   if (session.live) { replayPatches(session); noteServerTime(session.live.now); }
   if (!previous) ui.lastProgressAt = performance.now();
   state.session = session; syncAccountSelection();
+  if (previous && previous.status !== session.status) void quotaState.refresh().catch(() => {});
   const index = state.sessions.findIndex(s => s.id === session.id);
   const { messages, tools, events, permissions, tasks, metrics, capabilities, ...summary } = session;
   summary.activeAt = messages?.findLast(m => m.role === 'user')?.createdAt || session.createdAt;
@@ -1415,7 +1420,17 @@ function selectedAccount() { return state.account; }
 function loginInProgress() { return null; }
 function accountReady() { return state.execution ? state.execution.ready !== false : state.account?.loggedIn !== false; }
 function selectedUsage() { return ide.usage || {}; }
-function syncAccountSelection() {}
+let usageContextKey;
+const quotaState = createUsageState({
+  load: (id, force, choices) => { const query = new URLSearchParams(); if (id) query.set('sessionId', id); if (force) query.set('refresh', '1'); if (choices) query.set('choices', JSON.stringify(choices)); return api(`/api/usage?${query}`); },
+  render: snapshot => { ide.usage = snapshot; renderUsage(); renderNotices(); plugins.usage(); },
+});
+function syncAccountSelection() {
+  const choices = plugins.usageChoices(state.activeId), context = JSON.stringify([state.activeId, choices]);
+  if (usageContextKey === context) return;
+  usageContextKey = context; quotaState.select(state.activeId, choices);
+  if (state.authenticated) void quotaState.refresh().catch(() => {});
+}
 
 /* ---------- Official usage ---------- */
 function remainingTime(value) { const seconds = Math.max(0, Math.ceil((dateValue(value) - Date.now()) / 1000)); if (!dateValue(value)) return '时间待提供'; if (!seconds) return '等待刷新'; const d = Math.floor(seconds / 86400); const h = Math.floor(seconds % 86400 / 3600); const m = Math.floor(seconds % 3600 / 60); const s = seconds % 60; return `${d ? `${d}天 ` : ''}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`; }
@@ -1431,13 +1446,13 @@ function renderUsage() {
   const cooldown = usage.cooldownUntil || usage.retryAt;
   const key = JSON.stringify([selectedAccountId(), usage, ui.usageCollapsed, dateValue(five.resetsAt) <= now, dateValue(week.resetsAt) <= now, dateValue(cooldown) > now]);
   if (key === ui.usageKey) return; ui.usageKey = key;
-  $('#quota-five').innerHTML = quotaMarkup('5 小时已用', five, false);
+  $('#quota-five').innerHTML = quotaMarkup(usage.contextLabel ? `5 小时已用 · ${escape(usage.contextLabel)}` : '5 小时已用', five, false);
   $('#quota-week').innerHTML = quotaMarkup('本周剩余', week, true);
   $('#quota-reset').hidden = !cooldown;
   $('#quota-reset').innerHTML = cooldown ? `<span class="quota-label">${usage.rateLimited || dateValue(cooldown) > now ? '冷却剩余' : '官方额度'}</span><strong data-countdown="${escape(cooldown)}">${remainingTime(cooldown)}</strong>` : '';
   $('#usage-strip').classList.toggle('collapsed', ui.usageCollapsed);
   $('#usage-collapse').setAttribute('aria-label', ui.usageCollapsed ? '展开额度详情' : '收起额度详情');
-  $('#usage-strip').title = `${usage.unavailableReason || (usage.source ? `来源：${usage.source}` : '等待 Claude 官方额度数据')}${usage.updatedAt ? ` · 更新于 ${time(usage.updatedAt)}` : ''}${five.resetsAt ? ` · 5h 重置 ${new Date(five.resetsAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 北京时间` : ''}${week.resetsAt ? ` · 周重置 ${new Date(week.resetsAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 北京时间` : ''}`;
+  $('#usage-strip').title = `${usage.contextLabel ? `额度所属：${usage.contextLabel} · ` : ''}${usage.unavailableReason || (usage.source ? `来源：${usage.source}` : '等待 Claude 官方额度数据')}${usage.updatedAt ? ` · 更新于 ${time(usage.updatedAt)}` : ''}${five.resetsAt ? ` · 5h 重置 ${new Date(five.resetsAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 北京时间` : ''}${week.resetsAt ? ` · 周重置 ${new Date(week.resetsAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} 北京时间` : ''}`;
 }
 function tick() {
   renderUsage(); updateRunClock(); for (const el of $$('[data-countdown]')) { const text = remainingTime(el.dataset.countdown); if (el.textContent !== text) el.textContent = text; }
@@ -1445,7 +1460,7 @@ function tick() {
   // Re-evaluates the working row (shown once a running reply has been silent for a moment).
   if (running(state.session) && state.view === 'chat') scheduleRender();
 }
-async function refreshUsage() { $('#refresh-usage').disabled = true; $('#refresh-usage').classList.add('spinning'); try { const result = await api('/api/usage'); ide.usage = result.usage || result; renderUsage(); renderNotices(); } catch (error) { toast(error.message, true); } finally { $('#refresh-usage').disabled = false; $('#refresh-usage').classList.remove('spinning'); } }
+async function refreshUsage() { $('#refresh-usage').disabled = true; $('#refresh-usage').classList.add('spinning'); try { await quotaState.refresh(true); } catch (error) { toast(error.message, true); } finally { $('#refresh-usage').disabled = false; $('#refresh-usage').classList.remove('spinning'); } }
 async function ensureSession() {
   if (state.activeId) return state.activeId;
   const draft = $('#message-input').value; const created = await api('/api/sessions', { method: 'POST', body: { model: $('#model-select').value, permissionMode: $('#mode-select').value, effort: $('#effort-select').value } });
@@ -1656,7 +1671,8 @@ const plugins = createPluginHost({
   openSession: id => { if (!state.sessions.some(s => s.id === id && !s.archived)) return false; switchView('chat'); selectSession(id); return true; },
   insertText: text => { switchView('chat'); insertIntoComposer(text); },
   onCatalog: data => { themes.setExtra(data.themes); workshop.refresh(); renderSafeBanner(); },
-  onChange: () => { if ($('#command-dialog').open) renderCommands(); },
+  onComposerChange: syncAccountSelection,
+  onChange: () => { syncAccountSelection(); if ($('#command-dialog').open) renderCommands(); },
 });
 const workshop = createWorkshop({ api, toast, icon, escape, safe: safeMode, themes, plugins, setTheme, version: () => state.config.version || '' });
 function setTheme(id) {

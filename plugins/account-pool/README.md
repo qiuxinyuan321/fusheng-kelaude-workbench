@@ -26,6 +26,7 @@
 
 - `call(method, params)`：`list`、`create`、`update`、`settings`、`bind`、`refresh`、`loginCommand`。`create`、`update`、`settings`、`refresh` 通过共享锁；`bind` 只排在本插件队列里，并拒绝正在运行的会话，因此其他会话运行时也能切换；返回值只包含插件元数据与脱敏状态。
 - `beforeRun({session,cwd,request,kind})`：宿主已持执行锁时调用，返回 `{accountId,configDir}`。不得在此嵌套获取宿主锁。`request.choice` 是新对话第一条消息带来的选择：`auto` 解除固定，账号 ID 固定到该账号（须存在且已启用）。
+- `readUsage({session,choice,refresh,inProgress})`：读取当前会话对应账号的额度；运行中使用启动时记录的实际账号，空闲时固定账号按所选账号读取，自动策略按上轮账号读取。新对话按输入框预选账号读取；自动选择在运行前显示待确定。额度栏标注所属账号，原有账号的后台刷新不会覆盖独立账号。
 - `onEvent({session,event})`：接收通用 `quota` 与 `rate_limit` 事件，更新本轮所用账号的额度观测。
 - `onExit({session})`、`close()`：退出不自动重试，关闭停止监控。
 - `sessionState(id)`、`ownsSession(session)`：读取插件记录的当前账号及会话记录来源。
@@ -35,6 +36,7 @@
 
 ## 版本记录
 
+- 1.1.1：顶部额度按会话或新对话的预选账号读取并标注所属账号，隔离独立配置的限流事件；切换会话或预选账号后忽略迟到的额度响应。
 - 1.1.0：侧边栏「账号空间」入口和输入框账号选择器；切换已有会话的账号不再需要等其他会话结束；新对话可以在发送前选好账号。面板重新排版：账号卡片带额度进度条和重置倒计时，选择方式和会话绑定点选即生效。需要工作台 1.6.0 及以上。
 - 1.0.1：按模型系列匹配每周额度，Fable 和指定版本（如 `claude-opus-4-6`）的轮次也计入各自系列的周额度；`seven_day_fable` 等限额类型显示为「Fable 本周额度」。需要工作台 1.3.0 及以上。
 - 1.0.0：首个版本。
