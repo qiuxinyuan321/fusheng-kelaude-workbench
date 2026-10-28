@@ -209,6 +209,32 @@ test('search is literal, skips excluded data, supports subdirectories and caps r
   assert.equal(capped.matches.length, 200); assert.equal(capped.truncated, true);
 });
 
+test('search skips oversized files before applying the cumulative byte budget', async t => {
+  const { root, workspace: w } = await fixture(t);
+  const large = await fs.open(path.join(root, '00-large.bin'), 'w');
+  try { await large.truncate(33 * 1024 * 1024); } finally { await large.close(); }
+  const text = 'needle in a searchable file\n';
+  await fs.writeFile(path.join(root, 'zz-target.txt'), text);
+  const result = await w.search('needle');
+  assert.deepEqual(result.matches.map(m => [m.path, m.line]), [['zz-target.txt', 1]]);
+  assert.equal(result.truncated, false);
+  assert.equal(result.scannedFiles, 2);
+  assert.equal(result.scannedBytes, Buffer.byteLength(text));
+});
+
+test('search still truncates when searchable files exceed the cumulative byte budget', async t => {
+  const { root, workspace: w } = await fixture(t);
+  for (let i = 0; i < 16; i++) {
+    await fs.writeFile(path.join(root, `file-${String(i).padStart(2, '0')}.txt`), Buffer.alloc(TEXT_LIMIT, 'x'));
+  }
+  await fs.writeFile(path.join(root, 'zz-target.txt'), 'needle\n');
+  const result = await w.search('needle');
+  assert.deepEqual(result.matches, []);
+  assert.equal(result.truncated, true);
+  assert.equal(result.scannedFiles, 17);
+  assert.equal(result.scannedBytes, 32 * 1024 * 1024);
+});
+
 test('Git queries never discover a repository above the selected session root', async t => {
   const { base, workspace: w } = await fixture(t);
   await init(base);
