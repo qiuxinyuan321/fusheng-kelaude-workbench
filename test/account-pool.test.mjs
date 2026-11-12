@@ -432,3 +432,78 @@ test('accounts.json written before automatic continuation existed still loads wi
   await fs.writeFile(file, JSON.stringify(saved), { mode: 0o600 });
   await assert.rejects(createAccountPool(f.options), /未重建或覆盖/);
 });
+
+test('active turns pause background OAuth probes only for their own account while other accounts keep refreshing', async t => {
+  let unblockAuth;
+  const authGate = new Promise(resolve => { unblockAuth = resolve; });
+  let slowOnce = true;
+  const authCalls = [];
+  const f = await fixture(t, {
+    authProvider: async opts => {
+      authCalls.push(opts.accountId);
+      if (opts.accountId === 'primary' && slowOnce) {
+        slowOnce = false;
+        await authGate;
+      }
+      return { loggedIn: true, email: `${opts.accountId}@example.com`, subscriptionType: 'max', version: '2.1.322' };
+    },
+  });
+  const second = await f.create('第二账号');
+  authCalls.length = 0;
+
+  // Start an in-flight refresh on primary, then start a turn on primary: beforeRun drains the in-flight probe before spawning.
+  const refreshing = f.pool.call('refresh', { id: 'primary' });
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.deepEqual(authCalls, ['primary']);
+  let runReady = false;
+  const turn = session();
+  const preparing = f.pool.beforeRun({ session: turn }).then(res => { runReady = true; return res; });
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(runReady, false, 'foreground turn waits for in-flight OAuth probe to finish');
+  unblockAuth();
+  await refreshing;
+  const selected = await preparing;
+  assert.equal(selected.accountId, 'primary');
+
+  // While primary is running a turn, refreshing all accounts skips primary's CLI probe and refreshes second normally.
+  authCalls.length = 0;
+  const duringRun = await f.pool.call('refresh');
+  assert.deepEqual(authCalls, [second]);
+  const primarySnap = duringRun.accounts.find(a => a.id === 'primary');
+  assert.equal(primarySnap.usage.stale, true);
+  assert.match(primarySnap.usage.unavailableReason, /后台探测已暂缓/);
+
+  // Releasing the turn via onExit re-enables probes for primary.
+  f.pool.onExit({ session: turn, result: { code: 0 } });
+  authCalls.length = 0;
+  const afterRun = await f.pool.call('refresh', { id: 'primary' });
+  assert.deepEqual(authCalls, ['primary']);
+  assert.notEqual(afterRun.accounts.find(a => a.id === 'primary').usage.stale, true);
+});
+
+test('account refresh forwards per-account configDir and CLI version to syncModels via coordinated runProbe', async t => {
+  const synced = [];
+  const f = await fixture(t, {
+    authProvider: async ({ accountId }) => ({
+      loggedIn: true,
+      email: `${accountId}@example.com`,
+      subscriptionType: 'team',
+      version: '2.1.322',
+    }),
+    syncModels: async ({ configDir, version, force, runProbe }) => {
+      const ctx = await runProbe(async probeCtx => probeCtx);
+      synced.push({ configDir, version, force, probedDir: ctx?.configDir, accountId: ctx?.accountId });
+      return true;
+    },
+  });
+  const second = await f.create('团队账号');
+  synced.length = 0;
+  await f.pool.call('refresh');
+  assert.equal(synced.length, 2);
+  assert.deepEqual(synced.map(item => [item.accountId, item.version, item.force, item.configDir === item.probedDir]), [
+    ['primary', '2.1.322', true, true],
+    [second, '2.1.322', true, true],
+  ]);
+  assert.equal(synced[0].configDir, undefined);
+  assert.equal(synced[1].configDir, path.join(f.dataDir, 'profiles', second, 'config'));
+});

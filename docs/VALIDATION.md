@@ -1,5 +1,40 @@
 # 验证记录
 
+## 1.7.0
+
+验证日期：2026-11-12。底座升级到 1.7.0，内置插件「多账号轮询」升级到 1.3.0，其余插件未改动。
+
+底座变更：
+- 模型目录与 Claude Code 2.1.322 / Fable 5.2 适配：新增零轮次 `control_request: initialize` 握手（`probeCliModels`），服务冷启动、手动刷新或检测到 CLI 二进制版本升级时无需发送对话即可读取官方模型目录，支持 `Opus 5.5`、`Fable 5.2`、`Haiku 5.5`、`[1m]` 长上下文后缀及 `supportsEffort` / `supportsThinkingOff` 能力解锁；`ModelCatalog.save()` 改为串行原子写盘。
+- 同配置目录 OAuth 探针互斥协调：默认账号正在运行对话或原生 Claude 终端时，后台 `auth status`、`/usage` 与模型探测自动暂缓复用缓存，避免并发 CLI 抢刷 OAuth refresh token 报 401。
+- 额度展示与预警：顶栏额度区与输入区预警条识别官方 `/usage` 的 `weekly_scoped` 模型专属周子额度（如 `Fable 周剩余`），随当前所选模型自动匹配展示。
+- 首屏与静态资源优化：冷/热 `/api/bootstrap` 分流并支持 `?fresh=1` 强制刷新；带 `?v=1.7.0` 的静态资源与编辑器字体返回 `Cache-Control: public, max-age=31536000, immutable`，`/` 保持 `no-cache`；`xterm` 与 `workshop.js` 改为打开终端或工坊时按需懒加载；示例 Nginx HTTPS 配置补齐 `gzip`（含 `text/javascript`、`font/ttf`、`application/wasm`）。
+- 对话与工作区交互：支持侧栏会话置顶（运行中允许单独 `PATCH { pinned }`）与「全部 / 运行中 / 置顶」筛选、会话列表提问摘要 `preview` 搜索、对话提问目录浮层与 `Alt+↑/↓` 跳轮、轮次底部统计与「回到提问」、代码块行数/换行切换/长代码折叠、顶栏深浅色快速切换（`Shift+点击` 跟随系统）、斜杠命令模糊检索与键盘导航、桌面四处面板宽度拖拽记忆。
+
+插件变更（多账号轮询 1.3.0）：
+- 按账号隔离协调 OAuth 探针与前台会话/终端运行：某账号运行任务时仅暂缓该账号自身的后台 CLI 探测，其他账号仍可正常刷新登录、额度与模型目录。
+- 刷新账号时将各账号独立的 `configDir` 与 CLI 版本交由宿主 `syncModels` 在串行探针队列中同步模型并集；插件面板同步展示各账号的 `weekly_scoped` 模型专属周剩余额度。
+
+### 已完成
+
+- `npm ci`：依赖安装成功。
+- `npm test`：244 项测试（macOS 上 242 项通过，2 项 Linux subreaper 专属测试按平台跳过；全量 Node 20 / 22 / 24 Linux CI 跑满 244 项）。新增 9 项：
+  - `test/models.test.mjs`：`[1m]` 变体校验与归一化、`supportsThinkingOff`、CLI 版本升级触发 `needsRefresh`、替身 CLI 子进程零轮次 `probeCliModels` 握手（确认仅发 `initialize` 不发用户消息）；
+  - `test/account-pool.test.mjs`：单账号运行期间仅暂缓自身 OAuth 探针而不阻塞其他账号刷新、`syncModels` 按账号独立 `configDir` 协调探测；
+  - `test/optimizations.test.mjs`：冷/热 `/api/bootstrap` 与 CLI 升级自动重探 `Fable 5.2`、默认配置目录运行期探针暂缓、运行中单独置顶放行而改名拦截、会话摘要 `preview` 剥离工作区引用尾注与引导词、`immutable` 缓存头 / 懒加载 HTML / Nginx `gzip` 配置不变量。
+- `npm run build`：Monaco 主包及 worker 构建成功。
+- `npm run workshop:build -- --check`：目录与源码一致（7 个插件、2 款皮肤；多账号轮询 1.3.0，最低工作台 1.7.0）。
+- `npm audit --omit=dev`：0 漏洞。
+- `git diff --check`：通过；全库敏感信息扫描 0 命中。
+- Playwright Chromium 本地隔离实测（临时目录 + 2.1.322 替身 CLI，桌面 `1440×900` 与移动 `390×844` 双视口、浅色 `spruce` 与深色 `ink-night` 双主题）：
+  - 首屏仅请求必需脚本样式且均返回 `public, max-age=31536000, immutable`，无首屏 `xterm` / `workshop.js` 请求；
+  - 首屏模型下拉即展示 `Opus 5.5`、`Sonnet 5.5`、`Fable 5.2`、`Haiku 5.5`；切换 `Haiku 5.5` 后思考等级选择器正常解锁 `自动 / 低 / 中等 / 高`；顶栏额度条准确展示 `Fable 周剩余 74%`；
+  - 发送对话、代码块行数与换行按钮、「回到提问」、会话置顶与 `置顶 1` 计数、深浅色切换均正常，双视口无横向溢出，控制台 0 错误 0 警告。
+
+### 验证边界
+
+- 本地验证使用隔离替身 CLI 模拟 `2.1.322` `initialize` 与 `/usage` 响应，未在开源测试中连接真实 Claude 账号。
+
 ## 1.6.2
 
 验证日期：2026-10-29。修复用户反馈：一个账号额度用尽后任务没有换到下一个账号继续，对话一直显示加载，账号选择器也调不动。底座升级到 1.6.2，多账号轮询插件升级到 1.2.0，任务续接插件未改动。

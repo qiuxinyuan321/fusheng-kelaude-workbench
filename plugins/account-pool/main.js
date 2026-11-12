@@ -124,6 +124,15 @@
     const rename = h('form', { class: 'ap-rename', hidden: true, onsubmit: event => { event.preventDefault(); void act('update', { id: account.id, label: name.value }); } },
       name, h('button', { type: 'submit', class: 'wb-btn small primary', disabled: busy }, '保存'),
       button('取消', () => { rename.hidden = true; name.value = account.label; dirty = false; if (refreshPending) void load(); }));
+    const scoped = (usage.scopes || []).filter(item => item?.kind === 'weekly_scoped' && item.model && Number.isFinite(item.utilization));
+    const scopeRows = scoped.length ? h('div', { class: 'ap-scopes' }, scoped.map(item => {
+      const used = Math.min(100, Math.max(0, item.utilization)), left = 100 - used;
+      const level = used >= 90 ? ' bad' : used >= 75 ? ' warn' : '';
+      return h('div', { class: 'ap-scope-row', title: item.resetsAt ? `${resetFormat.format(new Date(item.resetsAt))} 重置` : '' },
+        h('span', null, `${item.model} 周剩余`),
+        h('div', { class: `wb-progress${level}` }, h('span', { style: { width: `${left}%` } })),
+        h('strong', { class: 'wb-num' }, `${Math.round(left)}%`));
+    })) : null;
     const cooldown = usage.rateLimited ? h('p', { class: 'ap-cooldown' }, icon('clock'), usage.cooldownUntil
       ? h('span', null, '官方额度暂不可用，冷却剩余 ', countdown(usage.cooldownUntil)) : h('span', null, '官方额度暂不可用，请稍后刷新')) : null;
     return h('article', { class: `ap-account${account.enabled ? '' : ' disabled'}${account.isDefault ? ' default' : ''}` },
@@ -132,7 +141,7 @@
           h('p', { class: 'wb-ellipsis' }, auth.emailMask || (loggedIn === true ? '已完成官方登录' : '等待官方登录'), account.primary ? ' · 工作台原有配置' : '')), plan),
       h('div', { class: 'ap-status' }, h('span', { class: 'wb-row' }, h('i', { class: `ap-dot ${tone}` }), status),
         account.isDefault ? h('span', { class: 'ap-badge' }, '默认账号') : pinned ? h('span', { class: 'ap-badge muted' }, `${pinned} 个会话固定使用`) : null),
-      h('div', { class: 'ap-meters' }, meter('5 小时已用', usage.fiveHour, false), meter('本周剩余', usage.sevenDay, true)),
+      h('div', { class: 'ap-meters' }, meter('5 小时已用', usage.fiveHour, false), meter('本周剩余', usage.sevenDay, true), scopeRows),
       cooldown,
       h('p', { class: 'ap-checked' }, usage.updatedAt ? `额度更新于 ${format.relative(usage.updatedAt)}` : usage.unavailableReason || '尚未读取额度'),
       h('div', { class: 'ap-actions' },
@@ -206,8 +215,15 @@
     const AUTO = 'auto';
     let snapshot = null, loading = false, again = false, timer = null;
     const named = id => snapshot?.accounts.find(account => account.id === id)?.label || '已移除的账号';
-    const quota = account => [account.usage?.fiveHour, account.usage?.sevenDay].some(window => Number.isFinite(window?.utilization))
-      ? ` · 5 小时 ${percent(account.usage.fiveHour)} · 每周 ${percent(account.usage.sevenDay)}` : '';
+    const quota = account => {
+      const scoped = (account.usage?.scopes || []).filter(item => item?.kind === 'weekly_scoped' && item.model && Number.isFinite(item.utilization));
+      const parts = [
+        Number.isFinite(account.usage?.fiveHour?.utilization) ? `5 小时 ${percent(account.usage.fiveHour)}` : '',
+        Number.isFinite(account.usage?.sevenDay?.utilization) ? `每周 ${percent(account.usage.sevenDay)}` : '',
+        ...scoped.map(item => `${item.model} ${Math.round(item.utilization)}%`),
+      ].filter(Boolean);
+      return parts.length ? ` · ${parts.join(' · ')}` : '';
+    };
     function publish() {
       const accounts = snapshot.accounts, loggedIn = accounts.filter(account => account.enabled && account.auth.loggedIn === true).length;
       const notes = snapshot.notes || {}, failed = Object.values(notes).filter(note => note.kind === 'failed').length;

@@ -42,6 +42,11 @@ html[data-surface="panel"] body { padding: 0; }
 .ap-unknown { font-size: 11.5px; color: var(--wb-ink-4); }
 .ap-reset { display: flex; flex-direction: column; gap: 1px; font-size: 11px; color: var(--wb-ink-4); }
 .ap-reset b { color: var(--wb-ink-2); font-weight: 650; }
+.ap-scopes { grid-column: 1 / -1; display: grid; gap: 6px; padding-top: 10px; border-top: 1px dashed var(--wb-line); }
+.ap-scope-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--wb-ink-3); min-width: 0; }
+.ap-scope-row > span { white-space: nowrap; font-weight: 550; }
+.ap-scope-row .wb-progress { flex: 1; min-width: 48px; height: 5px; }
+.ap-scope-row > strong { font-size: 12px; font-weight: 650; color: var(--wb-brand-2); min-width: 34px; text-align: right; }
 .ap-cooldown { display: flex; align-items: center; gap: 7px; margin-top: 11px; padding: 8px 10px; border-radius: 9px; background: var(--wb-red-soft); color: var(--wb-red); font-size: 12px; }
 .ap-checked { margin-top: 10px; font-size: 11px; color: var(--wb-ink-4); }
 .ap-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 11px; }

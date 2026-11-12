@@ -19,7 +19,7 @@ const fail = (status, message) => Object.assign(new Error(message), { status, st
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const idIsValid = id => id === PRIMARY_ACCOUNT_ID || (typeof id === 'string' && UUID.test(id));
 const bounded = (value, max = 80) => typeof value === 'string' && value.length <= max && !/[\x00-\x1f\x7f]/.test(value) ? value : null;
-const initialAuth = () => ({ loggedIn: null, emailMask: null, subscriptionType: null, authMethod: null });
+const initialAuth = () => ({ loggedIn: null, emailMask: null, subscriptionType: null, authMethod: null, version: null });
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 const date = now => new Date(now()).toISOString();
 const CONTINUATION = 'account-pool';
@@ -70,7 +70,7 @@ export async function createAccountPool(options) {
 class AccountPool {
   constructor({ dataDir, workspaceRoot, binary = 'claude', legacyConfigDir = path.join(homedir(), '.claude'),
     env = {}, isActive = () => true, isBusy = () => false, withExclusive = async fn => fn(), getSession = () => null, startTurn = null,
-    authProvider, usageFactory = options => new UsageMonitor(options), now = Date.now,
+    syncModels = null, authProvider, usageFactory = options => new UsageMonitor(options), now = Date.now,
     exec = promisify(execFile), onUpdate = () => {}, onNotes = () => {}, authTtlMs = 60_000,
     continueAttempts = 5, continueDelayMs = 3000 } = {}) {
     if (![dataDir, workspaceRoot, legacyConfigDir].every(value => typeof value === 'string' && path.isAbsolute(value))) {
@@ -80,18 +80,22 @@ class AccountPool {
       (!path.isAbsolute(binary) && !/^[A-Za-z0-9_.-]+$/.test(binary))) throw new TypeError('CLI binary must be absolute or a command name');
     if (!(authTtlMs > 0)) throw new TypeError('Authentication cache TTL must be positive');
     Object.assign(this, { dataDir, workspaceRoot, binary, legacyConfigDir, env, isActive, isBusy, withExclusive,
-      getSession, startTurn, authProvider, usageFactory, now, exec, onUpdate, onNotes, authTtlMs, continueAttempts, continueDelayMs });
+      getSession, startTurn, syncModels, authProvider, usageFactory, now, exec, onUpdate, onNotes, authTtlMs, continueAttempts, continueDelayMs });
     this.filename = path.join(dataDir, 'accounts.json');
     this.profilesRoot = path.join(dataDir, 'profiles');
     this.state = { version: 1, defaultAccountId: PRIMARY_ACCOUNT_ID, settings: { strategy: 'sticky', switchAt: 100, autoContinue: true },
       cursor: null, accounts: [{ id: PRIMARY_ACCOUNT_ID, label: '默认账号', enabled: true, createdAt: date(now) }], bindings: {} };
     this.runtime = new Map();
     this.runAccounts = new Map();
+    this.runPauses = new Map();
     // Per conversation, in memory: the accounts a quota-interrupted task already ran out on, and the latest
     // automatic switch or continuation to show beside its account picker.
     this.chains = new Map();
     this.notes = new Map();
     this.operations = Promise.resolve();
+    this.probes = Promise.resolve();
+    this.cliVersion = null;
+    this.cliVersionAt = 0;
     this.closed = false;
   }
 
@@ -150,7 +154,7 @@ class AccountPool {
 
   #runtime(id) {
     this.#record(id);
-    if (!this.runtime.has(id)) this.runtime.set(id, { auth: initialAuth(), lastAuthAt: null, monitor: null });
+    if (!this.runtime.has(id)) this.runtime.set(id, { auth: initialAuth(), lastAuthAt: null, monitor: null, inFlight: null, probePauses: 0 });
     return this.runtime.get(id);
   }
 
@@ -171,9 +175,55 @@ class AccountPool {
 
   #account(id) {
     const account = this.#record(id), runtime = this.#runtime(id);
+    const usage = runtime.monitor?.read?.() || unknownQuota();
+    if (runtime.probePauses > 0) {
+      usage.stale = true;
+      usage.unavailableReason ||= '该账号正在执行对话或终端任务，后台探测已暂缓。';
+    }
     return structuredClone({ ...account, isDefault: id === this.state.defaultAccountId,
-      primary: id === PRIMARY_ACCOUNT_ID, auth: runtime.auth,
-      usage: runtime.monitor?.read?.() || unknownQuota() });
+      primary: id === PRIMARY_ACCOUNT_ID, auth: runtime.auth, usage });
+  }
+
+  /** Keep background CLI probes out of a foreground process's credential profile.
+   * Reserve synchronously, then drain already-started probes before spawning. */
+  pauseProbes(id) {
+    this.#active();
+    const runtime = this.#runtime(id);
+    runtime.probePauses++;
+    let released = false;
+    return {
+      ready: Promise.allSettled([runtime.inFlight, this.probes]).then(() => {}),
+      release: () => { if (!released) { released = true; runtime.probePauses--; } },
+    };
+  }
+
+  /** Runs a lightweight non-turn CLI probe (such as model catalog initialization) on the shared
+   * serial probe queue, yielding whenever a foreground conversation or terminal pauses probes. */
+  runProbe(id, operation) {
+    this.#record(id);
+    const runtime = this.#runtime(id);
+    if (this.closed || !this.isActive() || runtime.probePauses || !this.#record(id).enabled) return Promise.resolve(undefined);
+    return this.#probe(id, () => operation({
+      accountId: id, configDir: this.#configDir(id), binary: this.binary, cwd: this.workspaceRoot, env: this.env,
+    }));
+  }
+
+  #probe(id, operation) {
+    const next = this.probes.catch(() => {}).then(() => this.closed || !this.isActive() || this.#runtime(id).probePauses ? undefined : operation());
+    this.probes = next.catch(() => {});
+    return next;
+  }
+
+  async refreshAll({ force = false, usage = true } = {}) {
+    if (this.closed || !this.isActive()) return null;
+    return this.#enqueue(async () => {
+      if (this.closed || !this.isActive()) return null;
+      for (const account of this.state.accounts) {
+        if (this.closed || !this.isActive()) break;
+        if (account.enabled) await this.#refresh(account.id, { force, usage });
+      }
+      return this.snapshot();
+    });
   }
 
   snapshot() {
@@ -364,25 +414,36 @@ class AccountPool {
       if (!selected) throw fail(409, '没有已登录且低于切换阈值的可用账号。请刷新账号状态、调整阈值或等待官方额度恢复。');
       const released = pinned && selected.id !== preferredId;
       if (released) pinned = false;
-      await this.#prepare(selected.id);
-      const sourceId = binding?.transcriptAccountId || PRIMARY_ACCOUNT_ID;
-      if (session.claudeSessionId && sourceId !== selected.id) {
-        await transferConversation({ sessionId: session.claudeSessionId, sourceDir: this.#storageDir(sourceId),
-          targetDir: this.#storageDir(selected.id), cwd });
-      }
-      this.#active();
-      const previous = structuredClone(this.state);
+      const pause = this.pauseProbes(selected.id);
       try {
-        this.state.bindings[session.id] = { accountId: selected.id, transcriptAccountId: selected.id, pinned };
-        this.state.cursor = selected.id;
-        await this.#persist();
-      } catch (error) { this.state = previous; throw error; }
-      // Only chat turns report their exit; terminals keep no per-turn account.
-      if (kind === 'run') this.runAccounts.set(session.id, selected.id);
+        await pause.ready;
+        await this.#prepare(selected.id);
+        const sourceId = binding?.transcriptAccountId || PRIMARY_ACCOUNT_ID;
+        if (session.claudeSessionId && sourceId !== selected.id) {
+          await transferConversation({ sessionId: session.claudeSessionId, sourceDir: this.#storageDir(sourceId),
+            targetDir: this.#storageDir(selected.id), cwd });
+        }
+        this.#active();
+        const previous = structuredClone(this.state);
+        try {
+          this.state.bindings[session.id] = { accountId: selected.id, transcriptAccountId: selected.id, pinned };
+          this.state.cursor = selected.id;
+          await this.#persist();
+        } catch (error) { this.state = previous; throw error; }
+      } catch (error) {
+        pause.release();
+        throw error;
+      }
+      // Only chat turns report their exit via onExit(payload); terminals release via the returned onExit callback.
+      if (kind === 'run') {
+        this.runPauses.get(session.id)?.release();
+        this.runPauses.set(session.id, pause);
+        this.runAccounts.set(session.id, selected.id);
+      }
       if (released) { this.notes.set(session.id, { kind: 'released', from: preferredId, to: selected.id, at: date(this.now) }); this.#noted(); }
       else if (!handoff && kind === 'run' && this.notes.delete(session.id)) this.#noted();
       this.onUpdate();
-      return { accountId: selected.id, configDir: this.#configDir(selected.id) };
+      return { accountId: selected.id, configDir: this.#configDir(selected.id), onExit: () => pause.release() };
     });
   }
 
@@ -397,6 +458,9 @@ class AccountPool {
    * the next account once the host has released the conversation. A stop, a restart, a failed start or a
    * user who acts first cancels it; each account is tried at most once per task. */
   onExit({ session, run, result = {} } = {}) {
+    const pause = this.runPauses.get(session?.id);
+    this.runPauses.delete(session?.id);
+    pause?.release();
     const accountId = this.runAccounts.get(session?.id);
     this.runAccounts.delete(session?.id);
     if (!accountId || !UUID.test(session?.id)) return;
@@ -458,32 +522,66 @@ class AccountPool {
 
   async close() {
     this.closed = true;
+    for (const pause of this.runPauses.values()) pause.release();
+    this.runPauses.clear();
     await Promise.allSettled([...this.runtime.values()].map(runtime => runtime.monitor?.close?.()));
-    await this.operations;
+    await Promise.allSettled([this.operations, this.probes]);
   }
 
   async #refresh(id, { force = false, usage = false } = {}) {
     this.#active();
     const runtime = this.#runtime(id);
-    if (force || runtime.lastAuthAt === null || this.now() - runtime.lastAuthAt >= this.authTtlMs) {
-      await this.#prepare(id);
-      try {
-        const configDir = this.#configDir(id), env = claudeEnvironment({ env: this.env, configDir });
-        let result;
-        if (this.authProvider) result = await this.authProvider({ accountId: id, configDir, binary: this.binary, cwd: this.workspaceRoot, env });
-        else {
-          let stdout;
-          try { ({ stdout } = await this.exec(this.binary, ['auth', 'status'], { cwd: this.workspaceRoot, env, timeout: 15_000, maxBuffer: 32768, encoding: 'utf8' })); }
-          catch (error) { if (typeof error.stdout !== 'string') throw error; stdout = error.stdout; }
-          result = JSON.parse(stdout);
-        }
-        runtime.auth = { loggedIn: typeof result?.loggedIn === 'boolean' ? result.loggedIn : null,
-          emailMask: maskEmail(result?.email), subscriptionType: bounded(result?.subscriptionType), authMethod: bounded(result?.authMethod) };
-      } catch { runtime.auth = initialAuth(); }
-      runtime.lastAuthAt = this.now();
+    if (runtime.probePauses > 0) return;
+    let shouldSyncModels = false;
+    const task = (async () => {
+      if (force || runtime.lastAuthAt === null || this.now() - runtime.lastAuthAt >= this.authTtlMs) {
+        await this.#prepare(id);
+        await this.#probe(id, async () => {
+          try {
+            const configDir = this.#configDir(id), env = claudeEnvironment({ env: this.env, configDir });
+            let result;
+            if (this.authProvider) {
+              result = await this.authProvider({ accountId: id, configDir, binary: this.binary, cwd: this.workspaceRoot, env });
+              shouldSyncModels = Boolean(result?.loggedIn === true && result?.version);
+            } else {
+              let stdout;
+              try { ({ stdout } = await this.exec(this.binary, ['auth', 'status'], { cwd: this.workspaceRoot, env, timeout: 15_000, maxBuffer: 32768, encoding: 'utf8' })); }
+              catch (error) { if (typeof error.stdout !== 'string') throw error; stdout = error.stdout; }
+              result = JSON.parse(stdout);
+              if (!this.cliVersion || this.now() - this.cliVersionAt >= 60_000) {
+                try {
+                  const versionOut = await this.exec(this.binary, ['--version'], { cwd: this.workspaceRoot, env, timeout: 12_000, maxBuffer: 4096, encoding: 'utf8' });
+                  this.cliVersion = bounded(versionOut.stdout?.trim(), 120) || this.cliVersion;
+                  this.cliVersionAt = this.now();
+                } catch { /* Login remains usable when a version query is unavailable. */ }
+              }
+              result.version = this.cliVersion;
+              shouldSyncModels = result?.loggedIn === true;
+            }
+            runtime.auth = { loggedIn: typeof result?.loggedIn === 'boolean' ? result.loggedIn : null,
+              emailMask: maskEmail(result?.email), subscriptionType: bounded(result?.subscriptionType),
+              authMethod: bounded(result?.authMethod), version: bounded(result?.version, 120) };
+          } catch { runtime.auth = initialAuth(); }
+          runtime.lastAuthAt = this.now();
+        });
+      } else if (runtime.auth.loggedIn === true && (!this.authProvider || runtime.auth.version)) {
+        shouldSyncModels = true;
+      }
+      this.#active();
+      if (usage && this.#record(id).enabled && runtime.auth.loggedIn === true) {
+        await this.#probe(id, () => this.#monitor(id).refresh({ force }));
+      }
+    })();
+    runtime.inFlight = task;
+    try { await task; } finally { if (runtime.inFlight === task) runtime.inFlight = null; }
+    if (shouldSyncModels && typeof this.syncModels === 'function' && this.#record(id).enabled && runtime.auth.loggedIn === true && !runtime.probePauses) {
+      await this.syncModels({
+        configDir: this.#configDir(id),
+        version: runtime.auth.version,
+        force,
+        runProbe: fn => this.runProbe(id, fn),
+      });
     }
-    this.#active();
-    if (usage && this.#record(id).enabled && runtime.auth.loggedIn === true) await this.#monitor(id).refresh({ force });
   }
 
   #enqueue(operation) {

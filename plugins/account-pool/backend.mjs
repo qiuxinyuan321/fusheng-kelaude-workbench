@@ -11,9 +11,14 @@ export async function activate(context) {
       return result;
     },
     executionStatus:()=>pool.executionStatus(),
+    refresh:options=>pool.refreshAll(options),
     async beforeRun(input) {
       const selected=await pool.beforeRun(input);
-      return {runnerOptions:selected.configDir?{configDir:selected.configDir}:{},ownsContext:selected.accountId!==PRIMARY_ACCOUNT_ID};
+      return {
+        runnerOptions:selected.configDir?{configDir:selected.configDir}:{},
+        ownsContext:selected.accountId!==PRIMARY_ACCOUNT_ID,
+        ...(selected.onExit?{onExit:selected.onExit}:{}),
+      };
     },
     onEvent:payload=>pool.onEvent(payload),
     onExit:payload=>pool.onExit(payload),
