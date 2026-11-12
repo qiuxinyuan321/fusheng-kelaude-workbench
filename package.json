@@ -1,6 +1,6 @@
 {
   "name": "fusheng-kelaode-workbench",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "浮生氪劳德工作台 · 在自己的云服务器上运行官方 Claude Code CLI，提供对话、文件、终端与监控底座，内置可选多账号轮询和任务恢复插件。",
   "private": true,
   "type": "module",

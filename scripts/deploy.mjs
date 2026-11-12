@@ -9,6 +9,32 @@ import {parseEnv, validateConfig, inside, exists, assertNoSymlink, writeNew, com
 const sourceRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const marker = 'fusheng-kelaude-workbench-deployment';
 const copyEntries = ['package.json', 'package-lock.json', 'server.mjs', 'lib', 'public', 'scripts', 'plugins', 'workshop', 'docs', 'deploy', 'test', 'README.md', 'LICENSE', 'SECURITY.md', 'DISCLAIMER.md', '.env.example', 'AGENTS.md'];
+const builtStaticFiles = ['public/index.html', 'public/app.js', 'public/styles.css',
+  'public/vendor/editor/monaco.js', 'public/vendor/editor/monaco.css',
+  'public/vendor/editor/editor.worker.js', 'public/vendor/editor/json.worker.js',
+  'public/vendor/editor/css.worker.js', 'public/vendor/editor/html.worker.js',
+  'public/vendor/editor/ts.worker.js'];
+
+export async function verifyBuiltAssets(releaseDir) {
+  const missing = [];
+  for (const relative of builtStaticFiles) {
+    try {
+      const stat = await fs.stat(path.join(releaseDir, relative));
+      if (!stat.isFile() || stat.size <= 0) missing.push(relative);
+    } catch { missing.push(relative); }
+  }
+  let hasEditorFont = false;
+  try {
+    const assetsDir = path.join(releaseDir, 'public/vendor/editor/assets');
+    for (const entry of await fs.readdir(assetsDir)) {
+      if (!entry.endsWith('.ttf')) continue;
+      const stat = await fs.stat(path.join(assetsDir, entry));
+      if (stat.isFile() && stat.size > 0) { hasEditorFont = true; break; }
+    }
+  } catch {}
+  if (!hasEditorFont) missing.push('public/vendor/editor/assets/*.ttf');
+  if (missing.length) throw new Error(`构建产物不完整，拒绝激活新版本：${missing.join(', ')}`);
+}
 
 export function parseArguments(argv) {
   const result = {};
@@ -40,7 +66,7 @@ function renderService(target) {
   return `[Unit]\nDescription=Fusheng Kelaude Workbench\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${systemdPath(target)}\nExecStart=${systemdQuote(process.execPath)} ${systemdQuote(path.join(target, 'current/scripts/run-deployment.mjs'))} ${systemdQuote(path.join(target, 'workbench.env'))}\nRestart=on-failure\nRestartSec=5\nKillMode=mixed\nTimeoutStopSec=30\nUMask=0077\nNoNewPrivileges=yes\nRestrictSUIDSGID=yes\n\n[Install]\nWantedBy=default.target\n`;
 }
 
-export async function deploy(options, {source = sourceRoot, run = command} = {}) {
+export async function deploy(options, {source = sourceRoot, run = command, verifyBuild = run === command} = {}) {
   if (!options.target || !path.isAbsolute(options.target)) throw new Error('必须通过 --target 指定绝对路径的部署目录。');
   if (process.platform === 'win32') throw new Error('自动部署支持 Linux/macOS；Windows 请使用 WSL2。');
   if (Number(process.versions.node.split('.')[0]) < 20) throw new Error('需要 Node.js 20 或更新版本。');
@@ -106,6 +132,7 @@ export async function deploy(options, {source = sourceRoot, run = command} = {})
     // npm lifecycle scripts are unnecessary for this project's dependencies.
     await run('npm', ['ci', '--ignore-scripts', '--no-fund', '--no-audit'], {cwd: releaseDir});
     await run('npm', ['run', 'build'], {cwd: releaseDir});
+    if (verifyBuild) await verifyBuiltAssets(releaseDir);
     await fs.mkdir(config.WORKBENCH_DATA, {recursive: true, mode: 0o700});
     if (!configExists) await writeNew(configFile, Object.entries(config).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n') + '\n');
     if (!authExists && options.password !== undefined) {

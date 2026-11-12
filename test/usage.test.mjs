@@ -181,9 +181,12 @@ test('live windows from served requests update the snapshot and a rejection carr
   let snapshot = monitor.read();
   assert.equal(snapshot.fiveHour.utilization, 60); assert.equal(snapshot.sevenDay.utilization, 20);
   assert.equal(snapshot.stale, false); assert.equal(snapshot.scopes[0].utilization, 77, 'model meters wait for the next /usage');
+  assert.equal(snapshot.scopes[0].stale, true, 'scoped model meters are explicitly marked stale until /usage refreshes');
   monitor.observe(normalizeRateLimit({ status: 'rejected', rateLimitType: 'five_hour', utilization: 1, resetsAt: 1893470400 }, '2030-01-01T00:03:00Z'));
   snapshot = monitor.read();
   assert.equal(snapshot.rateLimited, true); assert.equal(snapshot.limitType, 'five_hour'); assert.equal(snapshot.fiveHour.utilization, 100);
+  const refreshed = await monitor.refresh({ force: true });
+  assert.equal(Boolean(refreshed.scopes[0].stale), false, 'fresh /usage clears stale flag on scoped meters');
   advance(5 * 3600_000);
   assert.equal(monitor.read().limitType, null);
 });

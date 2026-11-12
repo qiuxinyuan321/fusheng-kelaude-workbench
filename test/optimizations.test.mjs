@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createWorkbench } from '../server.mjs';
 import { hashPassword } from '../lib/auth.mjs';
 import { cleanPreview, newSession, summary } from '../lib/state.mjs';
+import { normalizeRateLimit, normalizeUsageReport } from '../lib/usage.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORIGIN = 'http://198.51.100.10:17880';
@@ -122,6 +123,7 @@ async function createFixture(t, overrides = {}) {
     assert.equal(res.status, 200);
     cookie = res.headers.get('set-cookie').split(';')[0];
     csrf = res.body.csrfToken;
+    return { cookie, csrf };
   }
 
   return {
@@ -255,7 +257,7 @@ test('session summary preview strips workspace attachment footers and ignores st
   assert.equal(sum.preview, '实现首屏 immutable 静态缓存');
 });
 
-test('static asset caching, lazy-loaded HTML shell and Nginx HTTPS gzip configuration match 1.7.0 release invariants', async t => {
+test('static asset caching, lazy-loaded HTML shell and Nginx HTTPS gzip configuration match 1.7.1 release invariants', async t => {
   const f = await createFixture(t);
 
   const htmlRes = await fetch(`${f.base}/`);
@@ -287,4 +289,87 @@ test('static asset caching, lazy-loaded HTML shell and Nginx HTTPS gzip configur
   assert.match(nginxConf, /text\/javascript/);
   assert.match(nginxConf, /font\/ttf/);
   assert.match(nginxConf, /application\/wasm/);
+});
+
+test('rapid streaming rate_limit events coalesce into one 250ms SSE usage push, mark scoped quotas stale, and renew default auth trust', async t => {
+  let notedAuth = 0;
+  const monitor = {
+    account: { loggedIn: true, subscriptionType: 'max', authMethod: 'claude.ai', version: '2.1.322 (Claude Code)' },
+    sample: async activeRuns => ({ activeRuns, host: 'test-node' }),
+    auth: async () => monitor.account,
+    noteAuthenticated: () => { notedAuth++; },
+  };
+  const f = await createFixture(t, { usageMonitor: undefined, monitor });
+  const { cookie } = await f.login();
+
+  // Seed initial /usage snapshot with a Fable weekly_scoped meter.
+  const seeded = normalizeUsageReport({
+    rate_limits: {
+      limits: [
+        { kind: 'session', group: 'session', percent: 10, resets_at: '2099-01-01T05:00:00Z' },
+        { kind: 'weekly_all', group: 'weekly', percent: 20, resets_at: '2099-01-08T00:00:00Z' },
+        { kind: 'weekly_scoped', group: 'weekly', percent: 15, resets_at: '2099-01-08T00:00:00Z', scope: { model: { display_name: 'Fable' } } },
+      ],
+    },
+  }, '2026-11-13T00:00:00Z');
+  f.wb.usage.observe({ type: 'quota', ...seeded });
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  const abort = new AbortController();
+  t.after(() => abort.abort());
+  const sseRes = await fetch(`${f.base}/api/events?patches=1`, {
+    headers: { Origin: ORIGIN, Cookie: cookie },
+    signal: abort.signal,
+  });
+  assert.equal(sseRes.status, 200);
+  const usageFrames = [];
+  const reader = sseRes.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const pump = (async () => {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const block of parts) {
+          const line = block.split('\n').find(l => l.startsWith('data: '));
+          if (!line) continue;
+          const payload = JSON.parse(line.slice(6));
+          if (payload.type === 'usage') usageFrames.push(payload.usage);
+        }
+      }
+    } catch {}
+  })();
+
+  const created = await f.api('/api/sessions', { method: 'POST', body: { title: 'SSE 防抖与陈旧标签', model: 'fable' } });
+  const id = created.body.id;
+  await f.api(`/api/sessions/${id}/messages`, { method: 'POST', body: { text: '测试流式额度更新防抖' } });
+  const turn = f.fake.calls[0];
+  turn.emit({ type: 'session', sessionId: 'eeeeeeee-eeee-4eee-aeee-eeeeeeeeeeee' });
+  assert.equal(notedAuth, 1, 'session handshake renews default profile auth trust');
+
+  // Emit 5 rapid rate_limit updates within a single burst: SSE must coalesce them into 1 frame.
+  for (const pct of [0.21, 0.22, 0.23, 0.24, 0.25]) {
+    turn.emit(normalizeRateLimit({
+      status: 'allowed',
+      rateLimitType: 'five_hour',
+      unifiedWindows: {
+        five_hour: { utilization: pct, resetsAt: 4070926800 },
+        seven_day: { utilization: 0.31, resetsAt: 4071513600 },
+      },
+    }, '2026-11-13T00:01:00Z'));
+  }
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(usageFrames.length, 1, 'burst of rate_limit events coalesces into a single usage SSE frame');
+  assert.equal(usageFrames[0].fiveHour.utilization, 25);
+  assert.equal(usageFrames[0].sevenDay.utilization, 31);
+  assert.equal(usageFrames[0].scopes[0].stale, true, 'Fable weekly_scoped meter is marked stale until next /usage');
+
+  await turn.finish({ code: 0 });
+  assert.equal(notedAuth, 2, 'clean turn completion renews default profile auth trust');
+  abort.abort();
+  await pump;
 });

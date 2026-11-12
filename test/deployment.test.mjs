@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {deploy, parseArguments} from '../scripts/deploy.mjs';
+import {deploy, parseArguments, verifyBuiltAssets} from '../scripts/deploy.mjs';
 import {doctor} from '../scripts/doctor.mjs';
 import {parseEnv, deploymentEnvironment, systemdPath} from '../scripts/deployment-utils.mjs';
 
@@ -70,6 +70,35 @@ test('failed upgrade leaves the active release and data intact, removes its part
   await assert.rejects(fs.access(path.join(f.target, '.deploy.lock')), {code: 'ENOENT'});
   assert.equal(first.authReady, false);
   await assert.rejects(fs.access(path.join(f.target, 'data/auth.json')), {code: 'ENOENT'});
+});
+
+test('verifyBuild rejects incomplete Monaco or static assets before switching current and removes the broken release', async t => {
+  const f = await fixture(t);
+  const first = await deploy({target: f.target}, f);
+  const active = await fs.readlink(path.join(f.target, 'current'));
+
+  await assert.rejects(
+    deploy({target: f.target}, {...f, verifyBuild: true}),
+    /构建产物不完整.*monaco\.js/
+  );
+  assert.equal(await fs.readlink(path.join(f.target, 'current')), active, 'current symlink stays on previous working release');
+  assert.deepEqual(await fs.readdir(path.join(f.target, 'releases')), [first.release], 'broken candidate release directory is cleaned up');
+  await assert.rejects(fs.access(path.join(f.target, '.deploy.lock')), {code: 'ENOENT'});
+
+  const populateValidBuild = async (_program, args, options) => {
+    if (args[0] !== 'run' || args[1] !== 'build') return;
+    await fs.mkdir(path.join(options.cwd, 'public/vendor/editor/assets'), {recursive: true});
+    for (const rel of ['public/index.html', 'public/app.js', 'public/styles.css',
+      'public/vendor/editor/monaco.js', 'public/vendor/editor/monaco.css',
+      'public/vendor/editor/editor.worker.js', 'public/vendor/editor/json.worker.js',
+      'public/vendor/editor/css.worker.js', 'public/vendor/editor/html.worker.js',
+      'public/vendor/editor/ts.worker.js', 'public/vendor/editor/assets/codicon-TEST1234.ttf']) {
+      await fs.writeFile(path.join(options.cwd, rel), 'non-empty-built-asset');
+    }
+  };
+  const upgraded = await deploy({target: f.target}, {...f, run: populateValidBuild, verifyBuild: true});
+  assert.equal(await fs.readlink(path.join(f.target, 'current')), path.join('releases', upgraded.release));
+  await verifyBuiltAssets(path.join(f.target, 'releases', upgraded.release));
 });
 
 test('deploy rejects credential/data symlinks and external credential paths without modifying them', async t => {

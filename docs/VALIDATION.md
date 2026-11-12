@@ -1,5 +1,36 @@
 # 验证记录
 
+## 1.7.1
+
+验证日期：2026-11-13。底座升级到 1.7.1，内置插件「多账号轮询」升级到 1.3.1，其余插件未改动。
+
+底座变更：
+- 分模型周限陈旧状态与流式推送合并：`UsageMonitor.observe(rate_limit)` 在流式请求更新 5 小时与每周全局额度时，将已缓存的 `weekly_scoped` 模型专属周限（如 `Fable 周剩余`）显式标记 `stale: true`，直至下一次 `/usage` 探测刷新覆盖，避免流式执行期间分模型额度尚未刷新被误读为未扣减；服务端对 `UsageMonitor` 的 `usage` SSE 广播做 `250 ms` 合并防抖，消除高频工具步下的重复推送风暴。
+- 登录信任续期与探针精确排空：`SystemMonitor` 新增 `noteAuthenticated()`，默认账号对话轮次建立会话或正常结束时自动续期 10 分钟快速登录信任窗口，避免长于 10 分钟的任务结束后下一轮发送被迫等待 `claude auth status` 冷启动；`pauseDefaultProbes()` 仅等待已实际启动的 `activeDefaultProbe` 退出。
+- 部署完整性门禁与守护保护：`scripts/deploy.mjs` 在 `npm run build` 后、切换 `current` 符号链接前新增 `verifyBuiltAssets()`，校验核心页面资源、Monaco 主包、全部 worker 及 `.ttf` 图标字体均存在且非空，缺失时自动回滚清理候选版本目录并保留原 `current`；流式 `onEvent` 增加异常隔离并在服务启动入口注册 `unhandledRejection` / `uncaughtException` 日志保护。
+
+插件变更（多账号轮询 1.3.1）：
+- 消除跨账号探针阻塞：`AccountPool` 记录当前串行探针队列正在执行的 `activeProbe` 所属账号，`pauseProbes(id).ready` 仅等待当前目标账号自身的配置准备与在途探针排空，不再因其他账号正在执行慢速 `/usage` 或模型探测而阻塞本账号启动对话或终端。
+- 多账号登录缓存续期与陈旧提示：新增 `noteAuthenticated(id)`，本轮对话握手或正常完成时刷新对应账号的 `lastAuthAt`；插件面板的额度进度条与模型专属周限行同步支持展示 `待刷新` 陈旧标签。
+
+### 已完成
+
+- `npm ci`：依赖安装成功。
+- `npm test`：247 项测试（macOS 上 245 项通过，2 项 Linux subreaper 专属测试按平台跳过；全量 Node 20 / 22 / 24 Linux CI 跑满 247 项）。新增及扩充覆盖：
+  - `test/account-pool.test.mjs`：其他账号慢速后台探针进行中时 `pauseProbes('primary')` 不跨账号阻塞，同账号仍等待排空；长对话轮次通过 `noteAuthenticated` 续期本账号登录 TTL；
+  - `test/usage.test.mjs`：流式 `rate_limit` 更新 5h/7d 窗口时将 `scopes[*].stale` 标为 `true`，下一次 `/usage` 刷新后自动清除；
+  - `test/system.test.mjs`：`SystemMonitor.noteAuthenticated()` 在已登录状态下续期 10 分钟信任窗口，未登录状态下不伪造登录；
+  - `test/deployment.test.mjs`：`verifyBuild` 在缺少 `monaco.js` 或字体产物时拒绝切换 `current` 并清理残缺 `releases/<candidate>`，完整构建后放行激活；
+  - `test/optimizations.test.mjs`：连续突发流式 `rate_limit` 事件在 `250 ms` 窗口内合并为单帧 `usage` SSE 推送并带 `scopes[0].stale === true`，默认账号轮次握手与正常收尾自动调用 `noteAuthenticated()`，以及 `1.7.1` 版本化静态缓存头不变量。
+- `npm run build`：Monaco 主包、全部 worker 及 `.ttf` 字体构建成功，`verifyBuiltAssets` 校验通过。
+- `npm run workshop:build -- --check`：目录与源码一致（7 个插件、2 款皮肤；多账号轮询 1.3.1，最低工作台 1.7.1）。
+- `npm audit --omit=dev`：0 漏洞。
+- `git diff --check`：通过；全库敏感信息扫描 0 命中。
+
+### 验证边界
+
+- 本地与 CI 测试使用隔离临时目录与替身 CLI 验证探针协调、流式限额合并与部署回滚门禁，未在开源测试中连接真实 Claude 账号。
+
 ## 1.7.0
 
 验证日期：2026-11-12。底座升级到 1.7.0，内置插件「多账号轮询」升级到 1.3.0，其余插件未改动。

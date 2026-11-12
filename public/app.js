@@ -1,6 +1,6 @@
-const ASSET_V = '1.7.0';
-import { createThemeController, AUTO_THEMES, cssToHex, xtermTheme, monacoTheme } from './themes.js?v=1.7.0';
-import { createPluginHost } from './plugin-host.js?v=1.7.0';
+const ASSET_V = '1.7.1';
+import { createThemeController, AUTO_THEMES, cssToHex, xtermTheme, monacoTheme } from './themes.js?v=1.7.1';
+import { createPluginHost } from './plugin-host.js?v=1.7.1';
 let workshop = null;
 
 const $ = (selector, root = document) => root.querySelector(selector);

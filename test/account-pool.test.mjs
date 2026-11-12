@@ -507,3 +507,63 @@ test('account refresh forwards per-account configDir and CLI version to syncMode
   assert.equal(synced[0].configDir, undefined);
   assert.equal(synced[1].configDir, path.join(f.dataDir, 'profiles', second, 'config'));
 });
+
+test('pauseProbes isolates cross-account slow probes, and noteAuthenticated renews auth TTL across long turns', async t => {
+  let clock = fixedNow;
+  const authCalls = [];
+  const f = await fixture(t, {
+    now: () => clock,
+    authTtlMs: 60_000,
+    authProvider: async ({ accountId }) => {
+      authCalls.push(accountId);
+      return { loggedIn: true, email: `${accountId}@example.com`, subscriptionType: 'max', version: '2.1.322' };
+    },
+  });
+  const second = await f.create('慢探针账号');
+  await f.pool.call('refresh');
+  authCalls.length = 0;
+
+  // Start a slow background probe on `second`, then pause probes on `primary`: primary must not wait on `second`.
+  let releaseSecondProbe;
+  const secondGate = new Promise(resolve => { releaseSecondProbe = resolve; });
+  let secondStarted = false;
+  const slowProbe = f.pool.runProbe(second, async () => {
+    secondStarted = true;
+    await secondGate;
+    return 'done';
+  });
+  for (let i = 0; i < 40 && !secondStarted; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(secondStarted, true);
+
+  const startedAt = Date.now();
+  const primaryPause = f.pool.pauseProbes('primary');
+  await primaryPause.ready;
+  assert.ok(Date.now() - startedAt < 80, 'pausing primary must not wait for second account probe');
+  primaryPause.release();
+
+  // Pausing `second` itself DOES wait for `second`'s active probe to drain.
+  let secondDrained = false;
+  const secondPause = f.pool.pauseProbes(second);
+  const draining = secondPause.ready.then(() => { secondDrained = true; });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(secondDrained, false);
+  releaseSecondProbe();
+  await Promise.all([slowProbe, draining]);
+  assert.equal(secondDrained, true);
+  secondPause.release();
+
+  // Long foreground turn on primary: initial auth is 50s old when turn starts, turn runs 40s (total 90s > 60s TTL),
+  // but session/clean exit renews lastAuthAt so the next turn does not block on a cold auth check.
+  clock += 50_000;
+  const turn = session();
+  const firstRun = await f.pool.beforeRun({ session: turn });
+  assert.equal(firstRun.accountId, 'primary');
+  assert.equal(authCalls.length, 0);
+  clock += 40_000;
+  f.pool.onEvent({ session: turn, event: { type: 'session', sessionId: NATIVE } });
+  f.pool.onExit({ session: turn, result: { code: 0 } });
+  clock += 15_000;
+  const nextRun = await f.pool.beforeRun({ session: session() });
+  assert.equal(nextRun.accountId, 'primary');
+  assert.deepEqual(authCalls, [second], 'renewed auth TTL on primary skips redundant auth status check after a long turn');
+});

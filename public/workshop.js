@@ -1,7 +1,7 @@
 // 创意工坊: discover, install, enable and develop plugins and skins.
 // What is on this server comes from /api/plugins; the community catalog comes from /api/workshop, which the server
 // downloads and checks. Plugins run sandboxed and only get the permissions granted in the consent dialog below.
-import { THEMES, AUTO_THEMES } from './themes.js?v=1.7.0';
+import { THEMES, AUTO_THEMES } from './themes.js?v=1.7.1';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const DOCS_URL = 'https://github.com/qiuxinyuan321/fusheng-kelaude-workbench/blob/main/docs/PLUGINS.md';

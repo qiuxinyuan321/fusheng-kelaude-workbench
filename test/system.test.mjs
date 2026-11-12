@@ -40,4 +40,16 @@ setTimeout(() => console.log(readFileSync(${JSON.stringify(status)}, 'utf8')), 3
   await login(false); monitor.lastAccount = Date.now() - 11 * 60_000;
   r = await timed({ wait: false }); assert.equal(r.loggedIn, false); assert(r.ms >= 250);
   assert.equal(await checks(), 5);
+  // noteAuthenticated does not forge login when logged out, and renews the 10-minute trust window when logged in.
+  monitor.noteAuthenticated();
+  assert.equal(monitor.account.loggedIn, false);
+  await login(true);
+  await monitor.auth({ force: true });
+  assert.equal(await checks(), 6);
+  monitor.lastAccount = Date.now() - 12 * 60_000;
+  monitor.noteAuthenticated();
+  r = await timed({ wait: false });
+  assert.equal(r.loggedIn, true);
+  assert(r.ms < 100, 'renewed login trust answers immediately after a >10m foreground turn');
+  assert.equal(await checks(), 6);
 });

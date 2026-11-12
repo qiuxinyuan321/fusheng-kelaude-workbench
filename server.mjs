@@ -35,20 +35,34 @@ export async function createWorkbench(options={}){
  const userStamp=()=>{lastUserStamp=Math.max(Date.now(),lastUserStamp+1);return new Date(lastUserStamp).toISOString();};
  // Plugins and skins: builtin ones ship in ./plugins, installed and in-development ones live in <data>/plugins.
  const plugins=new PluginManager({dataDir,builtinDir:options.builtinPluginsDir===undefined?path.join(root,'plugins'):options.builtinPluginsDir,workbenchVersion:version,origin,safeMode:options.safeMode??process.env.WORKBENCH_SAFE_MODE==='1',workshopUrl:options.workshopUrl??process.env.WORKBENCH_WORKSHOP_URL,fetchImpl:options.fetchImpl});await plugins.init();
- const usage=options.usageMonitor||new UsageMonitor({binary,cwd:workspaceRoot,onUpdate:snapshot=>event({type:'usage',usage:snapshot})});
+ let usageEventTimer=null,pendingUsageSnapshot=null;
+ const queueUsageEvent=snapshot=>{
+  pendingUsageSnapshot=snapshot;
+  if(shuttingDown||usageEventTimer)return;
+  usageEventTimer=setTimeout(()=>{usageEventTimer=null;if(!shuttingDown&&pendingUsageSnapshot)event({type:'usage',usage:pendingUsageSnapshot});},250);
+  usageEventTimer.unref?.();
+ };
+ const usage=options.usageMonitor||new UsageMonitor({binary,cwd:workspaceRoot,onUpdate:queueUsageEvent});
  const terminals=options.terminals||new TerminalManager({binary,onUpdate:terminals=>event({type:'terminals',terminals})});
  const modelProbe=options.modelProbe!==undefined?options.modelProbe:(!options.monitor?probeCliModels:null);
  const modelSyncInFlight=new Map(),modelSyncAttemptAt=new Map();
- let defaultProbePauses=0,defaultProbes=Promise.resolve(),defaultAuthCache=null,defaultAuthWarm=false;
+ let defaultProbePauses=0,defaultProbes=Promise.resolve(),activeDefaultProbe=null,defaultAuthCache=null,defaultAuthWarm=false;
  function probeDefault(fn){
-  const next=defaultProbes.catch(()=>{}).then(()=>shuttingDown||defaultProbePauses?undefined:fn());
+  const next=defaultProbes.catch(()=>{}).then(()=>{
+   if(shuttingDown||defaultProbePauses)return undefined;
+   const running=Promise.resolve().then(fn);
+   const tracked=running.then(()=>{},()=>{});
+   activeDefaultProbe=tracked;
+   return running.finally(()=>{if(activeDefaultProbe===tracked)activeDefaultProbe=null;});
+  });
   defaultProbes=next.catch(()=>{});
   return next;
  }
  function pauseDefaultProbes(){
   if(shuttingDown)throw new PluginError(409,'任务启动已取消。');
   defaultProbePauses++;let released=false;
-  return {ready:defaultProbes.then(()=>{},()=>{}),release:()=>{if(!released){released=true;defaultProbePauses--;}}};
+  const draining=activeDefaultProbe||Promise.resolve();
+  return {ready:draining.then(()=>{},()=>{}),release:()=>{if(!released){released=true;defaultProbePauses--;}}};
  }
  async function syncModels({configDir,version:cliVersion,force=false,runProbe}={}){
   if(!modelProbe||shuttingDown)return false;
@@ -193,7 +207,7 @@ export async function createWorkbench(options={}){
   if(s.archived)return fail(409,'请先恢复归档会话。');
   // The reservation and completion include asynchronous preflight and persistence.
   let resolveDone, finished=false, staged=null;
-  const run={messageId:randomUUID(),usageBase:{...s.metrics},startedAt:Date.now(),handle:null,probePause:null,done:new Promise(resolve=>{resolveDone=resolve;})};
+  const run={messageId:randomUUID(),usageBase:{...s.metrics},startedAt:Date.now(),handle:null,probePause:null,defaultProfile:false,done:new Promise(resolve=>{resolveDone=resolve;})};
   runs.set(s.id,run);
   async function finish(result){
    if(finished)return run.done;
@@ -205,7 +219,10 @@ export async function createWorkbench(options={}){
      if(result.timedOut||result.stopReason==='error'||run.failed||s.status==='error')s.status='error';
      else if(result.stopped){s.status='idle';s.events.push({type:'stopped',time:now(),message:'任务已停止。'});}
      else if(result.code!==0&&!result.endedAfterResult){s.status='error';s.lastError=s.lastError||'Claude Code 进程已退出，请查看本轮记录后重试。';}
-     else s.status='idle';
+     else{
+      s.status='idle';
+      if(run.defaultProfile){monitor.noteAuthenticated?.();if(monitor.account?.loggedIn===true)defaultAuthCache=monitor.account;}
+     }
      s.metrics.durationMs=Math.max(s.metrics.durationMs,run.usageBase.durationMs+Date.now()-run.startedAt);
     }
     try{await store.save(s);}catch{console.error('Failed to persist completed session');}
@@ -220,6 +237,7 @@ export async function createWorkbench(options={}){
    const extensionOptions=await serverPlugins.prepare({session:s,cwd,request:{...request,text},run});
    if(run.cancelRequested||shuttingDown)throw new PluginError(409,'任务启动已取消。');
    if(!extensionOptions.configDir){
+    run.defaultProfile=true;
     const account=await checkDefaultAuth({wait:false}).catch(()=>null);
     if(account&&account.loggedIn===false)throw new PluginError(409,'Claude Code 尚未登录。请先在服务器完成官方登录，再发送任务。');
     run.probePause=pauseDefaultProbes();
@@ -236,7 +254,7 @@ export async function createWorkbench(options={}){
    if(run.cancelRequested||shuttingDown)throw new PluginError(409,'任务启动已取消。');
    notify(s.id,true);
    run.handle=runFactory({cwd,sessionId:s.claudeSessionId||undefined,model:s.model,effort:s.effort||'auto',permissionMode:s.permissionMode,prompt:text.trim(),binary,...extensionOptions,
-    onEvent:e=>{if(e.type==='quota'||e.type==='rate_limit')usage.observe?.(e);if(e.type==='capabilities'&&e.models?.length&&catalog.observe(context,e.models,e.version))event({type:'models',models:catalog.list()});const before=feed.before(s,e,run);applyEvent(s,e,run);serverPlugins.event({session:s,event:e,run});store.schedule(s);if(!feed.after(s,e,run,before))notify(s.id,e.type==='permission');else legacyNotify(s.id);},
+    onEvent:e=>{try{if(e.type==='session'&&run.defaultProfile){monitor.noteAuthenticated?.();if(monitor.account?.loggedIn===true)defaultAuthCache=monitor.account;}if(e.type==='quota'||e.type==='rate_limit')usage.observe?.(e);if(e.type==='capabilities'&&e.models?.length&&catalog.observe(context,e.models,e.version))event({type:'models',models:catalog.list()});const before=feed.before(s,e,run);applyEvent(s,e,run);serverPlugins.event({session:s,event:e,run});store.schedule(s);if(!feed.after(s,e,run,before))notify(s.id,e.type==='permission');else legacyNotify(s.id);}catch(err){console.error('Failed to process Claude stream event:',err?.message||err);}},
     onExit:finish,
    });
    if(run.cancelRequested||shuttingDown)run.handle?.stop();
@@ -343,7 +361,7 @@ export async function createWorkbench(options={}){
   const pending=[...runs.entries()];
   for(const [,r] of pending)r.cancelRequested=true;
   for(const [id,r] of pending){try{await serverPlugins.stop({session:store.get(id),run:r,reason:'shutdown'});}finally{r.handle?.stop();}}
-  clearInterval(tick);for(const t of [...notices.values(),...legacyNotices.values()])clearTimeout(t);
+  clearInterval(tick);if(usageEventTimer){clearTimeout(usageEventTimer);usageEventTimer=null;}for(const t of [...notices.values(),...legacyNotices.values()])clearTimeout(t);
   feed.close();await terminals.close();
   await Promise.allSettled(pending.map(([,r])=>r.done));
   await Promise.allSettled([...modelSyncInFlight.values(),defaultProbes]);
@@ -353,6 +371,8 @@ export async function createWorkbench(options={}){
  return {app,store,auth,runs,terminals,usage,monitor,plugins,serverPlugins,catalog,syncModels,pauseDefaultProbes,warmup,close};
 }
 if(process.argv[1]&&await fs.realpath(process.argv[1]).catch(()=>null)===fileURLToPath(import.meta.url)){
+ process.on('unhandledRejection',reason=>console.error('Unhandled promise rejection:',reason instanceof Error?reason.stack||reason.message:reason));
+ process.on('uncaughtException',error=>console.error('Uncaught exception:',error instanceof Error?error.stack||error.message:error));
  process.umask(0o077);const wb=await createWorkbench().catch(error=>{console.error(error.message);process.exit(1);});const server=wb.app.listen(Number(process.env.PORT||17880),process.env.WORKBENCH_HOST||'127.0.0.1',()=>console.log('浮生氪劳德工作台已启动，监听本机回环地址'));
  void wb.warmup().catch(()=>{});
  let closing=false;for(const signal of ['SIGTERM','SIGINT'])process.on(signal,async()=>{if(closing)return;closing=true;server.close();await wb.close();process.exit(0);});

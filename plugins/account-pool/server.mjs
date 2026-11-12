@@ -94,6 +94,7 @@ class AccountPool {
     this.notes = new Map();
     this.operations = Promise.resolve();
     this.probes = Promise.resolve();
+    this.activeProbe = null;
     this.cliVersion = null;
     this.cliVersionAt = 0;
     this.closed = false;
@@ -154,7 +155,7 @@ class AccountPool {
 
   #runtime(id) {
     this.#record(id);
-    if (!this.runtime.has(id)) this.runtime.set(id, { auth: initialAuth(), lastAuthAt: null, monitor: null, inFlight: null, probePauses: 0 });
+    if (!this.runtime.has(id)) this.runtime.set(id, { auth: initialAuth(), lastAuthAt: null, monitor: null, inFlight: null, preparing: null, probePauses: 0 });
     return this.runtime.get(id);
   }
 
@@ -185,16 +186,28 @@ class AccountPool {
   }
 
   /** Keep background CLI probes out of a foreground process's credential profile.
-   * Reserve synchronously, then drain already-started probes before spawning. */
+   * Reserve synchronously, then drain already-started probes for THIS account before spawning,
+   * without blocking on another account's slow /usage or model probe. */
   pauseProbes(id) {
     this.#active();
     const runtime = this.#runtime(id);
     runtime.probePauses++;
     let released = false;
+    const sameAccountProbe = this.activeProbe?.accountId === id ? this.activeProbe.promise : null;
     return {
-      ready: Promise.allSettled([runtime.inFlight, this.probes]).then(() => {}),
+      ready: Promise.allSettled([runtime.preparing, sameAccountProbe]).then(() => {}),
       release: () => { if (!released) { released = true; runtime.probePauses--; } },
     };
+  }
+
+  /** Renew the login confirmation timestamp after a foreground CLI process on this account
+   * successfully establishes or finishes a session, avoiding a redundant `claude auth status`
+   * cold start immediately after a long turn. */
+  noteAuthenticated(id) {
+    if (!idIsValid(id) || this.closed || !this.isActive()) return;
+    if (!this.state.accounts.some(account => account.id === id)) return;
+    const runtime = this.#runtime(id);
+    if (runtime.auth.loggedIn === true) runtime.lastAuthAt = this.now();
   }
 
   /** Runs a lightweight non-turn CLI probe (such as model catalog initialization) on the shared
@@ -209,7 +222,14 @@ class AccountPool {
   }
 
   #probe(id, operation) {
-    const next = this.probes.catch(() => {}).then(() => this.closed || !this.isActive() || this.#runtime(id).probePauses ? undefined : operation());
+    const next = this.probes.catch(() => {}).then(() => {
+      if (this.closed || !this.isActive() || this.#runtime(id).probePauses) return undefined;
+      const running = Promise.resolve().then(operation);
+      const tracked = running.then(() => {}, () => {});
+      const entry = { accountId: id, promise: tracked };
+      this.activeProbe = entry;
+      return running.finally(() => { if (this.activeProbe === entry) this.activeProbe = null; });
+    });
     this.probes = next.catch(() => {});
     return next;
   }
@@ -451,6 +471,7 @@ class AccountPool {
     // Quota events belong to the account this turn started on, even if the session was rebound meanwhile.
     const accountId = this.runAccounts.get(session?.id) || this.state.bindings[session?.id]?.accountId;
     if (!accountId || this.closed || !this.isActive()) return;
+    if (event?.type === 'session') this.noteAuthenticated(accountId);
     if (event?.type === 'quota' || event?.type === 'rate_limit') this.#monitor(accountId).observe?.(event);
   }
 
@@ -464,6 +485,9 @@ class AccountPool {
     const accountId = this.runAccounts.get(session?.id);
     this.runAccounts.delete(session?.id);
     if (!accountId || !UUID.test(session?.id)) return;
+    if (!result.limitReached && !result.stopped && !result.shutdown && !result.preflightFailed && result.code === 0) {
+      this.noteAuthenticated(accountId);
+    }
     if (!result.limitReached || result.stopped || result.shutdown || result.preflightFailed) { this.chains.delete(session.id); return; }
     if (this.closed || !this.isActive() || !this.state.settings.autoContinue || typeof this.startTurn !== 'function') return;
     const chain = this.chains.get(session.id) || { tried: [], request: interruptedRequest(session), limitType: null };
@@ -535,7 +559,10 @@ class AccountPool {
     let shouldSyncModels = false;
     const task = (async () => {
       if (force || runtime.lastAuthAt === null || this.now() - runtime.lastAuthAt >= this.authTtlMs) {
-        await this.#prepare(id);
+        const prep = this.#prepare(id);
+        runtime.preparing = prep;
+        try { await prep; } finally { if (runtime.preparing === prep) runtime.preparing = null; }
+        if (runtime.probePauses > 0) return;
         await this.#probe(id, async () => {
           try {
             const configDir = this.#configDir(id), env = claudeEnvironment({ env: this.env, configDir });

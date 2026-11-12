@@ -1,7 +1,7 @@
 // Runs plugins inside sandboxed iframes (opaque origin: no cookies, no access to this page) and answers their
 // bridge calls. Every frame gets its own MessageChannel; a call is honored only when the plugin was granted the
 // matching permission. Plugins never receive conversation text, files, terminal output or credentials.
-import { pluginTokens } from './themes.js?v=1.7.0';
+import { pluginTokens } from './themes.js?v=1.7.1';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const SURFACE_LABELS = { panel: '面板', widget: '小组件', overlay: '悬浮窗', background: '后台' };

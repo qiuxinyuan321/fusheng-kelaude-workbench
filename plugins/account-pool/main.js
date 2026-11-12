@@ -97,13 +97,14 @@
     } catch (error) { show(error.message); }
   }
 
-  function meter(label, window, showRemaining) {
+  function meter(label, window, showRemaining, parentStale = false) {
     const used = Number.isFinite(window?.utilization) ? Math.min(100, Math.max(0, window.utilization)) : null;
     const shown = used === null ? null : showRemaining ? 100 - used : used;
     const level = used === null ? '' : used >= 90 ? ' bad' : used >= 75 ? ' warn' : '';
     const reset = Date.parse(window?.resetsAt);
+    const stale = Boolean(parentStale || window?.stale || (Number.isFinite(reset) && reset <= Date.now()));
     return h('div', { class: 'ap-meter' },
-      h('div', { class: 'wb-between' }, h('span', { class: 'ap-meter-label' }, label), shown === null
+      h('div', { class: 'wb-between' }, h('span', { class: 'ap-meter-label' }, label, stale ? h('i', { class: 'ap-stale' }, '待刷新') : null), shown === null
         ? h('span', { class: 'ap-unknown' }, '待官方数据')
         : h('strong', { class: 'ap-meter-value wb-num' }, String(Math.round(shown)), h('small', null, '%'))),
       h('div', { class: `wb-progress${level}` }, h('span', { style: { width: `${shown ?? 0}%` } })),
@@ -128,8 +129,9 @@
     const scopeRows = scoped.length ? h('div', { class: 'ap-scopes' }, scoped.map(item => {
       const used = Math.min(100, Math.max(0, item.utilization)), left = 100 - used;
       const level = used >= 90 ? ' bad' : used >= 75 ? ' warn' : '';
+      const stale = Boolean(usage.stale || item.stale);
       return h('div', { class: 'ap-scope-row', title: item.resetsAt ? `${resetFormat.format(new Date(item.resetsAt))} 重置` : '' },
-        h('span', null, `${item.model} 周剩余`),
+        h('span', null, `${item.model} 周剩余`, stale ? h('i', { class: 'ap-stale' }, '待刷新') : null),
         h('div', { class: `wb-progress${level}` }, h('span', { style: { width: `${left}%` } })),
         h('strong', { class: 'wb-num' }, `${Math.round(left)}%`));
     })) : null;
@@ -141,7 +143,7 @@
           h('p', { class: 'wb-ellipsis' }, auth.emailMask || (loggedIn === true ? '已完成官方登录' : '等待官方登录'), account.primary ? ' · 工作台原有配置' : '')), plan),
       h('div', { class: 'ap-status' }, h('span', { class: 'wb-row' }, h('i', { class: `ap-dot ${tone}` }), status),
         account.isDefault ? h('span', { class: 'ap-badge' }, '默认账号') : pinned ? h('span', { class: 'ap-badge muted' }, `${pinned} 个会话固定使用`) : null),
-      h('div', { class: 'ap-meters' }, meter('5 小时已用', usage.fiveHour, false), meter('本周剩余', usage.sevenDay, true), scopeRows),
+      h('div', { class: 'ap-meters' }, meter('5 小时已用', usage.fiveHour, false, usage.stale), meter('本周剩余', usage.sevenDay, true, usage.stale), scopeRows),
       cooldown,
       h('p', { class: 'ap-checked' }, usage.updatedAt ? `额度更新于 ${format.relative(usage.updatedAt)}` : usage.unavailableReason || '尚未读取额度'),
       h('div', { class: 'ap-actions' },

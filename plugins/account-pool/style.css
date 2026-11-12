@@ -37,6 +37,7 @@ html[data-surface="panel"] body { padding: 0; }
 .ap-meters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; padding: 14px 0 13px; border-bottom: 1px solid var(--wb-line); }
 .ap-meter { display: grid; gap: 7px; min-width: 0; }
 .ap-meter-label { font-size: 12px; font-weight: 550; color: var(--wb-ink-2); }
+.ap-stale { display: inline-block; margin-left: 5px; padding: 1px 5px; border-radius: 99px; background: var(--wb-amber-soft); color: var(--wb-amber-2); font-style: normal; font-size: 10px; font-weight: 600; vertical-align: 1px; }
 .ap-meter-value { font-size: 19px; font-weight: 680; line-height: 1; letter-spacing: -.3px; }
 .ap-meter-value small { font-size: 11px; font-weight: 600; margin-left: 1px; color: var(--wb-ink-3); }
 .ap-unknown { font-size: 11.5px; color: var(--wb-ink-4); }
