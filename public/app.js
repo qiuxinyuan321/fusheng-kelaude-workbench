@@ -1,6 +1,6 @@
-const ASSET_V = '1.7.1';
-import { createThemeController, AUTO_THEMES, cssToHex, xtermTheme, monacoTheme } from './themes.js?v=1.7.1';
-import { createPluginHost } from './plugin-host.js?v=1.7.1';
+const ASSET_V = '1.8.0';
+import { createThemeController, AUTO_THEMES, cssToHex, xtermTheme, monacoTheme } from './themes.js?v=1.8.0';
+import { createPluginHost } from './plugin-host.js?v=1.8.0';
 let workshop = null;
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -43,19 +43,28 @@ const icons = {
   moon: '<path d="M20.4 14.6A8.5 8.5 0 0 1 9.4 3.6a8.5 8.5 0 1 0 11 11Z"/>',
   pin: '<path d="m15 4 5 5-3.5 1.5-3 3 .5 4.5-8-8 4.5.5 3-3L15 4ZM9 15l-5 5"/>',
   wrap: '<path d="M3 6h18M3 12h14a3 3 0 1 1 0 6h-4m2-2-2 2 2 2M3 18h6"/>',
+  'chevron-up': '<path d="m18 15-6-6-6 6"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+  flag: '<path d="M5 21V4m0 0h11l-2.2 4L16 12H5"/>',
+  landmark: '<path d="M3 21h18M4 18h16M6 18v-7M10 18v-7M14 18v-7M18 18v-7M3 11l9-7 9 7H3Z"/>',
+  radio: '<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/>',
+  'badge-check': '<path d="M12 2.8 14.8 5h3.6v3.6L20.6 11.4 18.4 14.2v3.6h-3.6L12 20.6 9.2 17.8H5.6v-3.6L3.4 11.4 5.6 8.6V5h3.6L12 2.8Z"/><path d="m9 12 2 2 4-4"/>',
+  disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>',
+  'shield-warn': '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="M12 8.5v4M12 15.8h.01"/>',
+  'shield-bad': '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m9.5 9.5 5 5M14.5 9.5l-5 5"/>',
 };
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.file}</svg>`;
 const assistantMark = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c.9 5.1 3.9 8.1 9 9-5.1.9-8.1 3.9-9 9-.9-5.1-3.9-8.1-9-9 5.1-.9 8.1-3.9 9-9Z"/><path d="M19.5 2v4M17.5 4h4"/></svg>';
 $$('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
 
 const storage = { get(key) { try { return localStorage.getItem(key); } catch { return null; } }, set(key, value) { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch {} } };
-const state = { csrf: '', sessions: [], session: null, activeId: null, system: null, account: null, execution: null, config: {}, archived: false, sessionFilter: 'all', view: 'chat', source: null, connected: false, hadDisconnect: false, lastVisibleSync: 0, authenticated: false, busy: false, renameId: null, sessionRequest: 0, selectionVersion: 0, refreshPending: false, refreshTimer: null, lastBootstrap: 0, syncNeeded: false, draftLoaded: false, pendingSend: null, pendingSteer: null, steering: false, sending: 0, syncMark: null };
+const state = { csrf: '', sessions: [], session: null, activeId: null, system: null, account: null, execution: null, envAudit: null, envChecking: false, envSaving: false, config: {}, archived: false, sessionFilter: 'all', view: 'chat', source: null, connected: false, hadDisconnect: false, lastVisibleSync: 0, authenticated: false, busy: false, renameId: null, sessionRequest: 0, selectionVersion: 0, refreshPending: false, refreshTimer: null, lastBootstrap: 0, syncNeeded: false, draftLoaded: false, pendingSend: null, pendingSteer: null, steering: false, sending: 0, syncMark: null };
 const ide = { usage: null, workspaceOpen: false, directory: '', explorer: 'files', entries: [], documents: new Map(), activeDocument: null, editor: null, monacoLoading: null, syncingEditor: false, preview: false, fileRequest: 0, attachments: new Map(), pathAction: null, terminal: null, terminalSource: null, xterm: null, xtermLoading: null, fit: null, terminalKind: 'shell', inputBuffer: '', inputTimer: null, inputPending: false, terminalStarting: false, commandIndex: 0, commands: [], slashIndex: 0, slashCommands: [] };
 // View state that survives live re-renders: keyed transcript rows, streaming reveal and scroll-follow state,
 // expanded activities/steps, loaded full tool records, sync timers.
 const ui = { renderedFor: null, outgoing: null, items: new Map(), pending: new Set(), reveal: new Map(), fresh: new Set(), patchLog: [], entryGroups: new Map(), stuck: true, pointerDown: false, touching: false, autoScrollTop: null, lastScrollTop: 0, skew: 0, lastProgressAt: 0, raf: 0, lastFrameAt: 0, renderPending: false, resyncTimer: null, monitorTimer: null, openGroups: new Set(), openSteps: new Set(), openThinking: new Set(), closedThinking: new Set(), fullTools: new Map(), loadingTools: new Set(), unseen: false, activeDocBySession: new Map(), usageKey: '', usageCollapsed: storage.get('cloud-ops-workbench-usage-collapsed') === '1', notify: storage.get('cloud-ops-workbench-notify') === '1', attention: null, favicon: '', syncTimer: null, syncPaths: null, syncAll: false, todoOpen: false, noticesHTML: '', effortHTML: '', sessionsHTML: '', outlineOpen: false, outlineKey: '', currentTurn: -1 };
 // Steps live in the activity panel by default; the transcript keeps one summary row per stretch of work.
-Object.assign(ui, { stepsInline: storage.get('cloud-ops-workbench-steps') === 'inline', activityPref: storage.get('cloud-ops-workbench-activity'), activityOpen: false, activitySuspended: false, activityTab: 'steps', activityFor: null, activityItems: new Map(), activityStuck: true, activityTimer: 0, openTurns: new Set(), closedTurns: new Set(), openFiles: new Set(), panelThinking: new Set() });
+Object.assign(ui, { stepsInline: storage.get('cloud-ops-workbench-steps') === 'inline', activityPref: storage.get('cloud-ops-workbench-activity'), activityOpen: false, activitySuspended: false, activityTab: 'steps', activityFor: null, activityItems: new Map(), activityStuck: true, activityTimer: 0, openTurns: new Set(), closedTurns: new Set(), openFiles: new Set(), panelThinking: new Set(), envMonitorOpen: storage.get('cloud-ops-workbench-env-monitor-closed') !== '1', envSettingsOpen: false, envExpandedCheck: null, envFilter: 'all', clientSignalsCache: null, clientSignalsAt: 0 });
 const nf = new Intl.NumberFormat('zh-CN');
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const formatNumber = value => finite(value) ? nf.format(value) : '未提供';
@@ -105,7 +114,7 @@ async function api(path, options = {}) {
   return data;
 }
 function showLogin(error = '') {
-  preserveDraft(); state.activeId = null; state.session = null; state.sessions = []; state.selectionVersion++; ui.renderedFor = null; resetLive(); state.draftLoaded = false;
+  preserveDraft(); state.envAudit = null; state.envChecking = false; state.envSaving = false; if ($('#env-dialog')?.open) $('#env-dialog').close(); renderEnvSafety(); state.activeId = null; state.session = null; state.sessions = []; state.selectionVersion++; ui.renderedFor = null; resetLive(); state.draftLoaded = false;
   state.hadDisconnect = false; ui.outlineOpen = false; ui.outlineKey = ''; $('#turn-outline-popover').hidden = true;
   $('#message-input').value = ''; $('#session-search').value = ''; $('#messages').replaceChildren(); $('#session-list').replaceChildren();
   state.authenticated = false; state.source?.close(); state.source = null; state.connected = false;
@@ -142,8 +151,11 @@ async function refreshBootstrap({ fresh = false } = {}) {
   if (!state.authenticated) return;
   state.sessions = Array.isArray(data.sessions) ? data.sessions : []; state.system = data.system ?? state.system;
   state.account = data.account ?? state.account; state.execution = data.execution ?? null; state.config = data.config || state.config; state.lastBootstrap = Date.now(); renderVersion();
+  if (data.envAudit) state.envAudit = data.envAudit;
   if (data.usage) ide.usage = data.usage;
   if (Array.isArray(data.terminals)) acceptTerminals(data.terminals);
+  renderEnvSafety(); if (state.connected) setConnected(true);
+  if (!state.envAudit && !state.envChecking) void refreshEnvAudit({ force: false, silent: true });
   configureEffort(); renderUsage();
   renderSessions(); renderServer(); renderTitleMeta(); updateControls();
   return data;
@@ -155,7 +167,7 @@ function setConnected(value) {
   $('#connection-badge .status-dot').classList.toggle('offline', !value);
   $('#host-dot').classList.toggle('offline', !value);
   $('#connection-banner').hidden = value;
-  $('#sidebar-host-status').textContent = value ? '云端连接正常' : '连接中，云端任务仍会继续';
+  $('#sidebar-host-status').textContent = value ? (state.envAudit?.egress?.ip || '云端连接正常') : '连接中，云端任务仍会继续';
   $('#monitor-live').style.opacity = value ? '1' : '.3';
 }
 function connectEvents() {
@@ -176,6 +188,14 @@ function connectEvents() {
     if (data.type === 'session-patch') { onPatch(data); return; }
     if (data.type === 'runtime-updated') { refreshBootstrap().catch(() => {}); plugins.runtimeChanged(); }
     if (data.type === 'system') { state.system = data.system; renderServer(); plugins.system(); }
+    if (data.type === 'env-audit') {
+      if (data.report) {
+        state.envAudit = data.report; renderEnvSafety(); renderNotices();
+        if (state.connected) setConnected(true);
+        if (data.drifted) toast(`环境漂移提醒：网络出口地区发生变化（当前 ${data.report.egress?.countryName || data.report.egress?.country || '未知'} · ${data.report.egress?.ip || ''}）`, true, { label: '查看检测', run: openEnvDialog });
+      }
+      return;
+    }
     if (data.type === 'usage') { ide.usage = data.usage; renderUsage(); renderNotices(); plugins.usage(); }
     if (data.type === 'models' && Array.isArray(data.models)) { state.config.models = data.models; renderModelOptions($('#model-select').value); configureEffort(); renderUsage(); renderNotices(); }
     if (data.type === 'terminal-updated' || data.type === 'terminal' || data.type === 'terminals') refreshTerminals().catch(() => {});
@@ -1280,7 +1300,8 @@ function renderMonitor() {
   renderContext(metrics); renderTokens(tokenValues, total);
   $('#tool-count').textContent = `${formatNumber(finite(metrics.toolCalls) ? metrics.toolCalls : tools.length)} 次工具调用`;
   $('#timeline-content').innerHTML = tools.length ? `<div class="timeline">${[...tools].reverse().slice(0, 120).map(tool => { const status = stepState(tool.status), info = toolInfo(tool.name || tool.toolName); return `<button type="button" class="timeline-item ${status.cls}" data-jump-tool="${escape(tool.id)}" title="在对话中定位这一步"><span class="timeline-icon">${statusMark(status.cls)}</span><div><strong>${escape(info.verb)}<small>${escape(tool.name || '')}</small></strong><p>${escape(toolSubject(tool).text || '输入详情见对话中的执行步骤')}</p></div><span class="timeline-duration">${finite(tool.durationMs) ? shortDuration(tool.durationMs) : time(tool.createdAt) || '—'}</span></button>`; }).join('')}</div>` : emptyMarkup('activity', '工作开始后，轨迹会出现在这里', '每次工具调用都有迹可循。');
-  renderFiles(tools); renderServer();
+  renderFiles(tools); renderServer(); renderEnvSafety();
+  if (!state.envAudit && !state.envChecking) void refreshEnvAudit({ force: false, silent: true });
   $('#monitor-updated').textContent = session?.updatedAt ? `最近更新 ${time(session.updatedAt)}` : '等待运行数据';
 }
 function renderContext(metrics) {
@@ -1366,6 +1387,17 @@ function renderNotices() {
   if (ctx !== null && ctx >= 80 && !running(session) && !session?.archived) notices.push({ tone: 'warn', icon: 'layers', text: `上下文已用 ${ctx.toFixed(0)}%，接近上限，可先压缩再继续。`, action: '<button type="button" data-native-command="/compact">原生终端 /compact</button>' });
   if (!accountReady()) notices.push({ tone: 'warn', icon: 'lock', text: escape(state.execution?.detail || '工作台尚未登录 Claude 账号，请在服务器上用官方 Claude Code 完成登录后再使用。'), action: '<button type="button" data-reload-page>刷新页面</button>' });
   if (state.config.version && ui.pageVersion && state.config.version !== ui.pageVersion) notices.push({ tone: 'info', icon: 'refresh', text: `工作台已更新到 v${escape(state.config.version)}，刷新页面即可使用新版本。`, action: '<button type="button" data-reload-page>刷新页面</button>' });
+  if (state.envAudit?.counts?.criticalFail > 0) {
+    const blockedByGuard = state.envAudit.settings?.blockOnCritical === true;
+    notices.push({
+      tone: blockedByGuard ? 'danger' : 'warn',
+      icon: 'shield',
+      text: blockedByGuard
+        ? `环境安全保镖已拦截启动：检测到 ${state.envAudit.counts.criticalFail} 项高危封号隐患，修复前暂停发起新对话与终端。`
+        : `环境安全提醒：检测到 ${state.envAudit.counts.criticalFail} 项高危封号风险，建议先核查网络与隔离状态。`,
+      action: '<button type="button" data-open-env-dialog>查看环境检测</button>',
+    });
+  }
   const usage = selectedUsage(), scoped = scopedQuotaFor(usage);
   const candidates = [['5 小时额度', usage.fiveHour], ['本周额度', usage.sevenDay], ...(scoped ? [[`${prettyModel(scoped.family)} 本周额度`, scoped.window]] : [])];
   const near = candidates.find(([, w]) => finite(w?.utilization) && w.utilization >= 90 && !(w.resetsAt && dateValue(w.resetsAt) <= Date.now()));
@@ -1610,6 +1642,294 @@ function accountReady() { return state.execution ? state.execution.ready !== fal
 function selectedUsage() { return ide.usage || {}; }
 function syncAccountSelection() {}
 
+/* ---------- Environment security & anti-ban audit ---------- */
+const envCheckIcons = {
+  proxy_core: 'cpu',
+  tun_interface: 'plug',
+  egress_ip: 'globe',
+  ip_consistency: 'badge-check',
+  timezone_match: 'clock',
+  region_support: 'flag',
+  ipv6_leak: 'disc',
+  dns_leak: 'search',
+  webrtc_leak: 'eye-off',
+  bodyguard_status: 'shield',
+  pinned_routing: 'list',
+  asn_type: 'landmark',
+  ecosystem_reachability: 'radio',
+};
+function envCheckGlyph(check) {
+  if (check.id === 'client_locale') return '<span class="env-abc-glyph" aria-hidden="true">ABC</span>';
+  return `<span class="env-item-icon">${icon(envCheckIcons[check.id] || check.icon || 'shield')}</span>`;
+}
+function envStatusGlyph(status) {
+  if (status === 'pass') return '<span class="env-status-badge is-pass" title="检测通过"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" stroke="none"/><path d="m6.2 10.2 2.4 2.5 5.2-5.3" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+  if (status === 'warn') return '<span class="env-status-badge is-warn" title="风险提示"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M9.13 3.1a1 1 0 0 1 1.74 0l6.86 12.15A1 1 0 0 1 16.86 16.75H3.14a1 1 0 0 1-.87-1.5L9.13 3.1Z" fill="currentColor" stroke="none"/><path d="M10 7.5v4.1M10 14.1h.01" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg></span>';
+  if (status === 'fail') return '<span class="env-status-badge is-fail" title="高危异常"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" fill="currentColor" stroke="none"/><path d="m7.2 7.2 5.6 5.6M12.8 7.2l-5.6 5.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></span>';
+  return '<span class="env-status-badge is-muted" title="已豁免提醒"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.8 10h6.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>';
+}
+async function collectClientEnvSignals({ force = false } = {}) {
+  if (!force && ui.clientSignalsCache && Date.now() - ui.clientSignalsAt < 60000) return ui.clientSignalsCache;
+  const language = typeof navigator !== 'undefined' ? String(navigator.language || '').slice(0, 32) : '';
+  let timezone = '';
+  try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+  const webrtcIps = new Set();
+  if (typeof RTCPeerConnection === 'function') {
+    await new Promise(resolve => {
+      let pc = null, settled = false;
+      const finish = () => { if (settled) return; settled = true; clearTimeout(timer); try { pc?.close(); } catch {} resolve(); };
+      const timer = setTimeout(finish, 550);
+      try {
+        pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }] });
+        pc.createDataChannel('probe');
+        pc.onicecandidate = evt => {
+          const cand = evt?.candidate?.candidate;
+          if (!cand) { finish(); return; }
+          const m = /(?:\b(?:(?:\d{1,3}\.){3}\d{1,3}|(?:[a-f0-9]{1,4}:){3,7}[a-f0-9]{1,4})\b)/ig.exec(cand);
+          if (m?.[0] && !m[0].endsWith('.local')) webrtcIps.add(m[0]);
+        };
+        pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(finish);
+      } catch { finish(); }
+    });
+  }
+  const signals = { language, timezone, webrtcIps: [...webrtcIps].slice(0, 8) };
+  ui.clientSignalsCache = signals; ui.clientSignalsAt = Date.now();
+  return signals;
+}
+async function refreshEnvAudit({ force = true, silent = false } = {}) {
+  if (state.envChecking || !state.authenticated) return state.envAudit;
+  state.envChecking = true; renderEnvSafety();
+  try {
+    const clientSignals = await collectClientEnvSignals({ force });
+    const report = await api('/api/env-audit/check', { method: 'POST', body: { force, clientSignals } });
+    if (!state.authenticated) return null;
+    state.envAudit = report;
+    renderEnvSafety(); renderNotices();
+    if (state.connected) setConnected(true);
+    if (!silent) toast(`环境检测已完成：${report.counts?.pass ?? 0} 项通过${report.counts?.warn ? ` · ${report.counts.warn} 项警告` : ''}${report.counts?.fail ? ` · ${report.counts.fail} 项高危` : ''}`);
+    return report;
+  } catch (error) {
+    if (!silent && error.status !== 401) toast(`环境检测未完成：${error.message}`, true);
+    return null;
+  } finally {
+    state.envChecking = false; renderEnvSafety();
+  }
+}
+async function updateEnvSettings(patch, doneText = '') {
+  if (state.envSaving) return;
+  state.envSaving = true; renderEnvSafety();
+  try {
+    const report = await api('/api/env-audit/settings', { method: 'PUT', body: patch });
+    if (report?.checks) state.envAudit = report;
+    else if (state.envAudit && report?.settings) state.envAudit = { ...state.envAudit, settings: report.settings };
+    renderEnvSafety(); renderNotices();
+    if (doneText) toast(doneText);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.envSaving = false; renderEnvSafety();
+  }
+}
+async function openEnvDialog() {
+  closeSidebar(); renderEnvSafety();
+  if (!$('#env-dialog').open) $('#env-dialog').showModal();
+  if (!state.envAudit && !state.envChecking) await refreshEnvAudit({ force: false, silent: true });
+}
+function envHostMarkup(report, hostKind) {
+  if (!report) {
+    return `<div class="env-panel env-loading"><div class="env-head"><span class="env-shield ok">${icon('shield')}</span><div class="env-title-wrap"><div class="env-title-row"><strong>环境安全</strong></div><p class="env-sub">${state.envChecking ? '正在实时探测出口 IP、ASN 属性、DNS/WebRTC 与隔离状态…' : '等待首次环境安全快照'}</p></div><div class="env-actions"><button type="button" class="env-icon-btn${state.envChecking ? ' spinning' : ''}" data-env-action="refresh" aria-label="立即检测环境" title="重新检测">${icon('refresh')}</button></div></div></div>`;
+  }
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  const counts = report.counts || { total: checks.length, pass: 0, warn: 0, fail: 0, muted: 0 };
+  const overall = report.overall || (counts.fail ? 'bad' : counts.warn ? 'warn' : 'ok');
+  const shieldIcon = overall === 'bad' ? 'shield-bad' : overall === 'warn' ? 'shield-warn' : 'shield';
+  const alwaysOpen = hostKind === 'dialog';
+  const isOpen = alwaysOpen ? true : ui.envMonitorOpen;
+  const subParts = [`<span>${counts.pass} 项通过</span>`];
+  if (counts.fail > 0) subParts.push(`<em class="is-fail">${counts.fail} 项高危</em>`);
+  if (counts.warn > 0) subParts.push(`<em class="is-warn">${counts.warn} 项警告</em>`);
+  if (counts.muted > 0) subParts.push(`<span>${counts.muted} 项已豁免</span>`);
+  if (report.checkedAt) subParts.push(`<span>${escape(time(report.checkedAt))} 检查</span>`);
+  const egressChip = report.egress?.ip ? `<span class="env-egress-tag" title="当前 Claude 请求实际出口">${escape(report.egress.ip)}${report.egress.countryName ? ` · ${escape(report.egress.countryName)}` : ''}</span>` : '';
+  const guardChip = report.settings?.blockOnCritical ? '<span class="env-guard-tag" title="已开启高危异常物理阻断">保镖拦截中</span>' : '';
+
+  const barHtml = `<div class="env-bar" role="list" aria-label="24 项环境安全胶囊条">${checks.map(c => {
+    const tone = c.muted ? 'muted' : c.status;
+    return `<button type="button" role="listitem" class="env-seg is-${escape(tone)}${ui.envExpandedCheck === c.id ? ' active' : ''}" data-env-seg="${escape(c.id)}" title="${escape(`${c.title}：${c.value || ''} — ${c.summary || ''}`)}" aria-label="${escape(`${c.title}：${c.value || ''}`)}"></button>`;
+  }).join('')}</div>`;
+
+  const mutedList = report.settings?.mutedChecks || [];
+  const settingsHtml = ui.envSettingsOpen ? `<div class="env-settings">
+    <label class="env-setting-row"><input type="checkbox" data-env-setting="blockOnCritical"${report.settings?.blockOnCritical ? ' checked' : ''}${state.envSaving ? ' disabled' : ''}><span><strong>高危风险自动阻断（保镖强拦截）</strong><small>当检测到受限国家/地区、中间人 TLS 抓包、24h 跨国跳变、环境变量污染或凭据隔离异常时，拒绝启动对话与原生终端。</small></span></label>
+    <label class="env-setting-row"><input type="checkbox" data-env-setting="watchdogEnabled"${report.settings?.watchdogEnabled !== false ? ' checked' : ''}${state.envSaving ? ' disabled' : ''}><span><strong>后台环境漂移巡检</strong><small>每 10 分钟静默复核出口 IP、地区与证书链，发生出口跳变时主动在界面顶部告警。</small></span></label>
+    ${mutedList.length ? `<div class="env-setting-foot"><span>已豁免 ${mutedList.length} 项非致命警告</span><button type="button" class="mini-button" data-env-action="unmute-all"${state.envSaving ? ' disabled' : ''}>恢复全部告警</button></div>` : ''}
+  </div>` : '';
+
+  const activeAlerts = checks.filter(c => !c.muted && (c.status === 'fail' || c.status === 'warn'));
+  const alertsHtml = activeAlerts.length ? `<div class="env-alerts">${activeAlerts.map(c => `<div class="env-alert is-${escape(c.status)}">
+    ${envStatusGlyph(c.status)}
+    <div class="env-alert-copy"><strong>${escape(c.title)}</strong><p>${escape(c.summary)}</p></div>
+    <div class="env-alert-actions">
+      <button type="button" class="env-mini-act" data-env-focus="${escape(c.id)}">查看详情</button>
+      <button type="button" class="env-mini-act" data-env-ask="${escape(c.id)}">填入诊断</button>
+      ${!c.critical && c.status === 'warn' ? `<button type="button" class="env-mini-act subtle" data-env-mute="${escape(c.id)}" title="在已知云主机等场景下将此非致命提醒设为知悉">知悉豁免</button>` : ''}
+    </div>
+  </div>`).join('')}</div>` : '';
+
+  const issueChecks = checks.filter(c => c.status !== 'pass' || c.muted);
+  const filter = ui.envFilter === 'issues' && !issueChecks.length ? 'all' : ui.envFilter;
+  const foldBarHtml = `<div class="env-fold-bar">
+    ${alwaysOpen ? `<span class="env-fold-static">共 ${checks.length} 项防封审计指标 · 点击任意条目查看实测依据</span>` : `<button type="button" class="env-fold-btn" data-env-action="toggle-open" aria-expanded="${isOpen}"><span>${isOpen ? '收起' : `展开全部 ${checks.length} 项检测`}</span>${icon(isOpen ? 'chevron-up' : 'chevron-down')}</button>`}
+    ${isOpen ? `<div class="env-filters" role="tablist" aria-label="检测项分类筛选">
+      <button type="button" class="${filter === 'all' ? 'active' : ''}" data-env-filter="all">全部 ${checks.length}</button>
+      <button type="button" class="${filter === 'preflight' ? 'active' : ''}" data-env-filter="preflight">核心 14 项</button>
+      <button type="button" class="${filter === 'community' ? 'active' : ''}" data-env-filter="community">社区防封 10 项</button>
+      ${issueChecks.length ? `<button type="button" class="${filter === 'issues' ? 'active' : ''}" data-env-filter="issues">异常 / 豁免 ${issueChecks.length}</button>` : ''}
+    </div>` : ''}
+  </div>`;
+
+  const renderItem = c => {
+    const tone = c.muted ? 'muted' : c.status;
+    const expanded = ui.envExpandedCheck === c.id;
+    return `<div class="env-item is-${escape(tone)}${expanded ? ' expanded' : ''}" data-env-check-id="${escape(c.id)}">
+      <button type="button" class="env-item-row" data-env-toggle-item="${escape(c.id)}" aria-expanded="${expanded}">
+        ${envCheckGlyph(c)}
+        <span class="env-item-title">${escape(c.title)}</span>
+        <span class="env-item-val" title="${escape(c.summary || '')}">${escape(c.value || '')}</span>
+        ${envStatusGlyph(tone)}
+      </button>
+      ${expanded ? `<div class="env-item-body">
+        <p class="env-item-summary">${escape(c.summary || '')}</p>
+        ${c.detail ? `<p class="env-item-detail">${escape(c.detail)}</p>` : ''}
+        ${c.advice && (c.status !== 'pass' || c.muted) ? `<p class="env-item-advice"><strong>防封建议：</strong>${escape(c.advice)}</p>` : ''}
+        <div class="env-item-foot">
+          <button type="button" class="mini-button" data-env-ask="${escape(c.id)}">${icon('sparkles')}填入对话诊断</button>
+          ${c.id === 'ip_stability_density' && c.status !== 'pass' ? `<button type="button" class="mini-button" data-env-action="clear-history"${state.envSaving ? ' disabled' : ''}>重置 24h 出口轨迹</button>` : ''}
+          ${!c.critical && (c.status === 'warn' || c.muted) ? `<button type="button" class="mini-button" data-env-mute="${escape(c.id)}"${state.envSaving ? ' disabled' : ''}>${c.muted ? '恢复告警提醒' : '知悉并豁免提醒'}</button>` : ''}
+        </div>
+      </div>` : ''}
+    </div>`;
+  };
+
+  let sectionsHtml = '';
+  if (isOpen) {
+    if (filter === 'all') {
+      const groups = Array.isArray(report.groups) && report.groups.length ? report.groups : [
+        { id: 'preflight', title: '基础网络与区域审计（核心 14 项）' },
+        { id: 'community', title: 'GitHub & 社区高危防封审计（深度 10 项）' },
+      ];
+      sectionsHtml = `<div class="env-sections">${groups.map(g => {
+        const items = checks.filter(c => c.group === g.id);
+        if (!items.length) return '';
+        return `<div class="env-group"><div class="env-group-head"><span>${escape(g.title)}</span><small>${items.filter(i => i.status === 'pass').length}/${items.length} 通过</small></div><div class="env-grid">${items.map(renderItem).join('')}</div></div>`;
+      }).join('')}</div>`;
+    } else {
+      const filtered = filter === 'issues' ? issueChecks : checks.filter(c => c.group === filter);
+      sectionsHtml = `<div class="env-sections"><div class="env-grid">${filtered.map(renderItem).join('')}</div></div>`;
+    }
+  }
+
+  return `<div class="env-panel is-${escape(overall)}">
+    <div class="env-head">
+      <span class="env-shield ${escape(overall)}">${icon(shieldIcon)}</span>
+      <div class="env-title-wrap">
+        <div class="env-title-row"><strong>环境安全</strong>${egressChip}${guardChip}</div>
+        <p class="env-sub">${subParts.join('<i aria-hidden="true">·</i>')}</p>
+      </div>
+      <div class="env-actions">
+        <button type="button" class="env-icon-btn${state.envChecking ? ' spinning' : ''}" data-env-action="refresh" aria-label="重新执行环境检测" title="重新检测 24 项防封指标"${state.envChecking ? ' disabled' : ''}>${icon('refresh')}</button>
+        <button type="button" class="env-icon-btn${ui.envSettingsOpen ? ' active' : ''}" data-env-action="settings" aria-label="环境安全防护设置" aria-expanded="${ui.envSettingsOpen}" title="保镖阻断与巡检设置">${icon('settings')}</button>
+      </div>
+    </div>
+    ${barHtml}
+    ${settingsHtml}
+    ${alertsHtml}
+    ${foldBarHtml}
+    ${sectionsHtml}
+  </div>`;
+}
+function renderEnvSafety() {
+  const pill = $('#env-safety-button'), label = $('#env-safety-label');
+  const report = state.envAudit, counts = report?.counts;
+  if (pill && label) {
+    const overall = report?.overall || 'idle';
+    pill.className = `env-safety-pill is-${overall}${state.envChecking ? ' checking' : ''}`;
+    label.textContent = state.envChecking && !report ? '检测中…' : counts?.fail ? `${counts.fail} 项高危` : counts?.warn ? `${counts.warn} 项警告` : report ? '环境安全' : '环境检测';
+    pill.title = report
+      ? `环境安全与防封审计 · ${counts.pass} 项通过${counts.warn ? ` · ${counts.warn} 项警告` : ''}${counts.fail ? ` · ${counts.fail} 项高危` : ''}${report.egress?.ip ? ` · 出口 ${report.egress.ip} (${report.egress.country || ''})` : ''} · 点击查看详情`
+      : '环境安全与防封审计 · 点击查看 24 项详情';
+  }
+  for (const [selector, kind] of [['#monitor-env-safety', 'monitor'], ['#dialog-env-safety', 'dialog']]) {
+    const host = $(selector); if (!host) continue;
+    const html = envHostMarkup(report, kind);
+    if (host.dataset.sig !== html) { host.innerHTML = html; host.dataset.sig = html; }
+  }
+}
+function askClaudeAboutEnvCheck(checkId) {
+  const check = state.envAudit?.checks?.find(c => c.id === checkId);
+  if (!check) return;
+  const eg = state.envAudit?.egress || {};
+  const prompt = `请只读帮我分析当前工作台「环境安全检测」中的这一项告警，说明风险影响并给出稳妥的处置评估建议（先不要直接修改系统配置）：\n- 检测项：${check.title}（${check.id}）\n- 当前状态：${check.status.toUpperCase()} · ${check.value || ''}\n- 检测结论：${check.summary || ''}\n- 技术详情：${check.detail || '无'}\n- 当前出口：${eg.ip || '未知'} (${eg.country || ''} · ${eg.asn || ''} ${eg.org || ''})\n- 系统时区：${eg.timezone || '未知'}`;
+  if ($('#env-dialog')?.open) $('#env-dialog').close();
+  insertIntoComposer(prompt);
+  toast(`已将「${check.title}」诊断上下文填入输入框。`);
+}
+async function toggleMuteEnvCheck(checkId) {
+  const current = new Set(state.envAudit?.settings?.mutedChecks || []);
+  const check = state.envAudit?.checks?.find(c => c.id === checkId);
+  if (!check || check.critical) return;
+  const muting = !current.has(checkId);
+  if (muting) current.add(checkId); else current.delete(checkId);
+  await updateEnvSettings({ mutedChecks: [...current] }, muting ? `已将「${check.title}」设为知悉豁免。` : `已恢复「${check.title}」告警提醒。`);
+}
+function handleEnvHostClick(event) {
+  const actionBtn = event.target.closest('[data-env-action]');
+  if (actionBtn) {
+    const act = actionBtn.dataset.envAction;
+    if (act === 'refresh') { void refreshEnvAudit({ force: true, silent: false }); return; }
+    if (act === 'settings') { ui.envSettingsOpen = !ui.envSettingsOpen; renderEnvSafety(); return; }
+    if (act === 'unmute-all') { void updateEnvSettings({ mutedChecks: [] }, '已恢复全部环境安全警告。'); return; }
+    if (act === 'clear-history') { void updateEnvSettings({ clearHistory: true }, '已重置近 24 小时出口轨迹基线。'); return; }
+    if (act === 'toggle-open') {
+      ui.envMonitorOpen = !ui.envMonitorOpen; storage.set('cloud-ops-workbench-env-monitor-closed', ui.envMonitorOpen ? '' : '1');
+      renderEnvSafety();
+      return;
+    }
+  }
+  const filterBtn = event.target.closest('[data-env-filter]');
+  if (filterBtn) { ui.envFilter = filterBtn.dataset.envFilter; renderEnvSafety(); return; }
+  const segBtn = event.target.closest('[data-env-seg]');
+  if (segBtn) {
+    const id = segBtn.dataset.envSeg, host = segBtn.closest('.env-safety-host');
+    if (host?.id === 'monitor-env-safety' && !ui.envMonitorOpen) { ui.envMonitorOpen = true; storage.set('cloud-ops-workbench-env-monitor-closed', ''); }
+    ui.envFilter = 'all'; ui.envExpandedCheck = ui.envExpandedCheck === id ? null : id;
+    renderEnvSafety();
+    if (ui.envExpandedCheck && host) requestAnimationFrame(() => host.querySelector(`[data-env-check-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+    return;
+  }
+  const focusBtn = event.target.closest('[data-env-focus]');
+  if (focusBtn) {
+    const id = focusBtn.dataset.envFocus, host = focusBtn.closest('.env-safety-host');
+    if (host?.id === 'monitor-env-safety' && !ui.envMonitorOpen) { ui.envMonitorOpen = true; storage.set('cloud-ops-workbench-env-monitor-closed', ''); }
+    ui.envFilter = 'all'; ui.envExpandedCheck = id; renderEnvSafety();
+    requestAnimationFrame(() => host?.querySelector(`[data-env-check-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+    return;
+  }
+  const toggleBtn = event.target.closest('[data-env-toggle-item]');
+  if (toggleBtn) { ui.envExpandedCheck = ui.envExpandedCheck === toggleBtn.dataset.envToggleItem ? null : toggleBtn.dataset.envToggleItem; renderEnvSafety(); return; }
+  const askBtn = event.target.closest('[data-env-ask]');
+  if (askBtn) { askClaudeAboutEnvCheck(askBtn.dataset.envAsk); return; }
+  const muteBtn = event.target.closest('[data-env-mute]');
+  if (muteBtn) void toggleMuteEnvCheck(muteBtn.dataset.envMute);
+}
+function handleEnvHostChange(event) {
+  const input = event.target.closest('[data-env-setting]');
+  if (!input) return;
+  const key = input.dataset.envSetting;
+  if (key === 'blockOnCritical') void updateEnvSettings({ blockOnCritical: input.checked }, input.checked ? '已开启保镖高危强拦截（Fail-Closed）。' : '已关闭保镖启动强拦截。');
+  if (key === 'watchdogEnabled') void updateEnvSettings({ watchdogEnabled: input.checked }, input.checked ? '已开启后台环境漂移巡检。' : '已暂停后台环境漂移巡检。');
+}
+
 /* ---------- Official usage ---------- */
 function scopedQuotaFor(usage = selectedUsage()) {
   const activeFamily = familyOf($('#model-select')?.value || state.session?.model || 'sonnet');
@@ -1843,6 +2163,7 @@ function commandsList() {
   const inRun = running(state.session), doc = currentDocument();
   const setMode = mode => async () => { $('#mode-select').value = mode; if (state.activeId) await changeSession(state.activeId, { permissionMode: mode }); updateControls(); };
   const list = [
+    { id: 'env-safety', title: '环境安全检测（防封审计）', subtitle: '核验出口 IP、ASN 机房属性、时区语言、TLS/QUIC 与凭据隔离等 24 项指标', icon: 'shield', slash: '/env', run: openEnvDialog },
     { id: 'new', title: '开启新会话', subtitle: '保存当前草稿并开始新对话', icon: 'plus', slash: '/new', run: newSessionView },
     ...(state.activeId ? [{ id: 'pin', title: state.session?.pinned ? '取消置顶当前会话' : '置顶当前会话', subtitle: '固定在左侧会话列表顶部', icon: 'pin', slash: '/pin', run: () => togglePin(state.activeId) }] : []),
     ...(inRun ? [{ id: 'stop', title: '停止当前任务', subtitle: 'Claude 正在工作，发送停止请求', icon: 'square', slash: '/stop', run: () => $('#stop-button').click() }] : []),
@@ -1991,6 +2312,10 @@ $('#session-list').addEventListener('click', async event => {
 $('#rename-current').addEventListener('click', () => openRename(state.activeId));
 $('#rename-cancel').addEventListener('click', () => $('#rename-dialog').close());
 $('#rename-dialog').addEventListener('click', event => { if (event.target === $('#rename-dialog')) { const box = event.target.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) event.target.close(); } });
+$('#env-safety-button').addEventListener('click', openEnvDialog);
+$('#env-dialog-close').addEventListener('click', () => $('#env-dialog').close());
+$('#env-dialog').addEventListener('click', event => { if (event.target === $('#env-dialog')) { const box = event.target.getBoundingClientRect(); if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) event.target.close(); } });
+$$('.env-safety-host').forEach(host => { host.addEventListener('click', handleEnvHostClick); host.addEventListener('change', handleEnvHostChange); });
 $('#rename-form').addEventListener('submit', async event => { event.preventDefault(); const title = $('#rename-input').value.trim(); if (!title) return; const button = $('#rename-form button[type="submit"]'); button.disabled = true; try { await changeSession(state.renameId, { title }); $('#rename-dialog').close(); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } });
 $('.view-tabs').addEventListener('click', event => { const button = event.target.closest('.view-tab'); if (button) switchView(button.dataset.tab); });
 $('#theme-toggle').addEventListener('click', event => toggleColorScheme(event.shiftKey));
@@ -2073,6 +2398,7 @@ document.addEventListener('click', event => {
   if (!(event.target instanceof Element)) return;
   if (ui.outlineOpen && !event.target.closest('#turn-outline-button, #turn-outline-popover')) { ui.outlineOpen = false; renderTurnOutline(); }
   if (event.target.closest('#messages, #activity-list')) return;
+  if (event.target.closest('[data-open-env-dialog]')) { openEnvDialog(); return; }
   if (event.target.closest('[data-reload-page]')) { location.reload(); return; }
   const goto = event.target.closest('[data-goto-session]'); if (goto) { selectSession(goto.dataset.gotoSession); return; }
   const open = event.target.closest('[data-open-path]'); if (open) { openPath(open.dataset.openPath, { line: open.dataset.openLine }); return; }
@@ -2162,7 +2488,7 @@ for (const [selector, key] of [['#model-select', 'model'], ['#mode-select', 'per
     }
   }
 });
-async function manualRefresh() { const button = $('#refresh-button'); button.disabled = true; button.classList.add('spinning'); try { await refreshBootstrap({ fresh: true }); if (state.activeId) await refreshSession(); if (!state.connected) connectEvents(); toast('状态已更新。'); } catch (error) { toast(error.message, true); } finally { button.disabled = false; button.classList.remove('spinning'); } }
+async function manualRefresh() { const button = $('#refresh-button'); button.disabled = true; button.classList.add('spinning'); try { await Promise.all([refreshBootstrap({ fresh: true }), refreshEnvAudit({ force: true, silent: true })]); if (state.activeId) await refreshSession(); if (!state.connected) connectEvents(); toast('状态已更新。'); } catch (error) { toast(error.message, true); } finally { button.disabled = false; button.classList.remove('spinning'); } }
 $('#refresh-button').addEventListener('click', manualRefresh);
 $('#reconnect-button').addEventListener('click', () => { connectEvents(); });
 document.addEventListener('keydown', event => {

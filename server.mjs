@@ -1,5 +1,6 @@
 import express from 'express';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
@@ -14,6 +15,7 @@ import {LiveFeed} from './lib/live.mjs';
 import {ModelCatalog,contextKey,isModel,parseCliVersion,probeCliModels} from './lib/models.mjs';
 import {PluginManager,PluginError} from './lib/plugins.mjs';
 import {ServerPluginHost,validChoices} from './lib/server-plugins.mjs';
+import {EnvironmentAuditor} from './lib/env-audit.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 // Shown in the page; release is the directory name under releases/ when deployed from a release tree.
 const version=JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).version,release=path.basename(path.dirname(root))==='releases'?path.basename(root):null;
@@ -108,6 +110,29 @@ export async function createWorkbench(options={}){
  const runBlocked=s=>locked()?'插件或配置操作正在进行，请完成后再开始任务。':sessionBusy(s.id)?'这个会话的任务或终端仍在运行。请等待完成，或先停止它。':runs.size>=maxRuns?`已有 ${maxRuns} 个任务在并行运行。请等其中一个完成，或先停止一个。`:null;
  async function withExclusive(action){if(shuttingDown)throw new PluginError(503,'工作台正在关闭。');if(busy())throw new PluginError(409,'请等待当前任务、终端或配置操作结束。');mutations.add(EXCLUSIVE);try{return await action();}finally{mutations.delete(EXCLUSIVE);}}
  const serverPlugins=new ServerPluginHost({manager:plugins,dataDir,context:{binary,workspaceRoot,getSession:id=>store.get(id),listSessions:()=>[...store.sessions.values()],startTurn,isBusy:busy,isClosing:()=>shuttingDown,withExclusive,syncModels,runtimeChanged:()=>event({type:'runtime-updated'})}});
+ const isMockedSuite=Boolean(options.monitor||options.usageMonitor||options.runFactory);
+ const fallbackTestProbe=async({accounts:accList=[]}={})=>({
+  checkedAtMs:Date.now(),resolvedTz:'Asia/Tokyo',localeEnv:'en_US.UTF-8',interfaces:[{name:'eth0',family:'IPv4',address:'198.51.100.10',internal:false}],
+  ipv6SocketBlocked:true,ipv6BlockCode:'EACCES',dnsServers:['1.1.1.1','8.8.8.8'],proxyCores:[],local7890:false,configuredProxy:null,configuredProxyAlive:null,
+  ipRules:'',unitHasAddressSandbox:true,hasRemoteBrowser:false,browserHasDisableQuic:false,browserHasNoProxy:false,ntpSynchronized:true,
+  trace:{ok:true,source:'claude.ai',ip:'198.51.100.10',loc:'JP',warp:'off',tls:'TLSv1.3',http:'h2',colo:'NRT',latencyMs:12,serverDate:Date.now()},
+  independentIp:{ok:true,ip:'198.51.100.10',source:'api.ipify.org',latencyMs:18},dnsRes:{ok:true,apiAddrs:['160.79.104.10'],webAddrs:['160.79.104.10']},
+  ecosystem:[{id:'api',host:'api.anthropic.com',reachable:true,status:404,latencyMs:14,blocked:false},{id:'web',host:'claude.ai',reachable:true,status:200,latencyMs:12,blocked:false},{id:'oauth',host:'claude.com',reachable:true,status:200,latencyMs:15,blocked:false},{id:'platform',host:'platform.claude.com',reachable:true,status:200,latencyMs:19,blocked:false}],
+  tlsInfo:{ok:true,authorized:true,protocol:'TLSv1.3',alpn:'h2',issuerOrg:'Google Trust Services',rootOrg:'GTS Root R1',daysRemaining:72,latencyMs:17},
+  ipv6Egress:{blockedBySandbox:true},asnInfo:{ok:true,source:'ipinfo.io',asn:'AS2516',org:'KDDI CORPORATION',isp:'KDDI',country:'JP',timezone:'Asia/Tokyo',reportedType:'isp'},
+  cliInfo:{exists:true,executable:true,realPath:binary,isOfficialLayout:true},contaminatedProcessVars:[],tlsBypassEnv:false,sanitizerWorking:true,
+  profileChecks:accList.map(a=>({id:a.id,label:a.label,enabled:a.enabled,loggedIn:a.loggedIn,rateLimited:a.rateLimited,version:a.version,realCfg:a.configDir||`/tmp/cfg-${a.id}`,dirMode:0o700,credMode:0o600,contaminatedSettings:[]})),
+  wildClaudePids:[],
+ });
+ const legacyConfigDir=options.legacyConfigDir||path.join(os.homedir(),'.claude');
+ const envAuditor=options.envAuditor||new EnvironmentAuditor({
+  dataDir,binary,legacyConfigDir,
+  ...(options.envProbe?{probeRunner:options.envProbe}:isMockedSuite?{probeRunner:fallbackTestProbe,watchdogIntervalMs:0}:{}),
+  getAccounts:()=>[{id:'primary',label:'默认账号',enabled:true,loggedIn:defaultAuthCache?.loggedIn===true,rateLimited:Boolean(usage.read()?.rateLimited),version:defaultAuthCache?.version||null,configDir:legacyConfigDir}],
+  getAccountFeatures:()=>({activeRuns:runs.size+(terminals.active?.kind==='claude'?1:0),maxConcurrentRuns:maxRuns}),
+  onUpdate:(report,meta)=>{if(!shuttingDown)event({type:'env-audit',report,...(meta?.drifted?{drifted:true}:{})});},
+ });
+ await envAuditor.init();
  const effortLevels=['auto','low','medium','high','xhigh','max'];
  const app=express();app.disable('x-powered-by');
  // Only our local reverse proxy may provide a client address; never trust arbitrary X-Forwarded-For chains.
@@ -144,18 +169,23 @@ export async function createWorkbench(options={}){
     account?.loggedIn!==false?refreshDefaultUsage({force:true}).catch(()=>{}):Promise.resolve(),
     account?.loggedIn===true?syncModels({version:account.version,force:true}):Promise.resolve(),
     serverPlugins.refresh({force:true}),
+    envAuditor.check({force:true}).catch(()=>null),
    ]);
   }else{
    if(!cold&&!shuttingDown)void checkDefaultAuth({wait:false}).catch(()=>{});
    void refreshDefaultUsage().catch(()=>{});
+   if(!envAuditor.read()&&!shuttingDown)void envAuditor.check().catch(()=>{});
    if(account?.loggedIn===true){
     if(cold&&modelProbe)await syncModels({version:account.version});
     else void syncModels({version:account.version});
    }
   }
   const execution=await serverPlugins.executionStatus(account);
-  res.json({execution,user:req.login.user,csrfToken:req.login.csrfToken,sessions:store.list(),system,account,usage:readDefaultUsage(),terminals:terminals.list(),config:{version,release,models:catalog.list(),effortLevels,workspaceRoot,rootOperations:process.env.WORKBENCH_ROOT_OPERATIONS==='1',maxConcurrentRuns:maxRuns,maxMessageLength:30000,usageSource:'official-cli',costBasis:'API 等价估算，非 Pro 账单',privateWorkspace:true,plugins:{safeMode:plugins.safeMode,workshop:Boolean(plugins.workshopUrl),sdkVersion:1}}});
+  res.json({execution,user:req.login.user,csrfToken:req.login.csrfToken,sessions:store.list(),system,account,usage:readDefaultUsage(),terminals:terminals.list(),envAudit:envAuditor.read(),config:{version,release,models:catalog.list(),effortLevels,workspaceRoot,rootOperations:process.env.WORKBENCH_ROOT_OPERATIONS==='1',maxConcurrentRuns:maxRuns,maxMessageLength:30000,usageSource:'official-cli',costBasis:'API 等价估算，非 Pro 账单',privateWorkspace:true,plugins:{safeMode:plugins.safeMode,workshop:Boolean(plugins.workshopUrl),sdkVersion:1}}});
  });
+ app.get('/api/env-audit',async(req,res)=>res.json(await envAuditor.check({force:req.query.fresh==='1'})));
+ app.post('/api/env-audit/check',async(req,res)=>res.json(await envAuditor.check({force:req.body?.force!==false,clientSignals:req.body?.clientSignals})));
+ app.put('/api/env-audit/settings',async(req,res)=>res.json(await envAuditor.updateSettings(req.body)));
  app.get('/api/usage',async(req,res)=>{await refreshDefaultUsage({force:req.query.refresh!=='0'}).catch(()=>{});res.json(readDefaultUsage());});
  app.get('/api/sessions',(req,res)=>res.json(store.list()));
  app.get('/api/events',(req,res)=>{if(clients.size>=24)return send(res,429,'打开的实时连接较多，请关闭多余页面。');res.set({'Content-Type':'text/event-stream','Cache-Control':'no-store','Connection':'keep-alive','X-Accel-Buffering':'no'});res.flushHeaders();const c={res,key:req.login.key,expires:req.login.expires,patches:req.query.patches==='1'};clients.add(c);res.write('retry: 3000\n\n');res.write('data: {"type":"connected"}\n\n');req.on('close',()=>clients.delete(c));});
@@ -175,6 +205,7 @@ export async function createWorkbench(options={}){
  app.use('/api/sessions/:id',(req,res,next)=>{req.session=store.get(req.params.id);if(!req.session)return send(res,404,'会话不存在。');next();});
  registerIDE(app,{store,workspaceRoot,terminals,runs,mutations,send,auth,clients,event,isClosing:()=>shuttingDown,isLocked:locked,prepareTerminal:async(session,cwd,kind)=>{
   if(kind!=='claude')return {};
+  await envAuditor.assertSafeBeforeRun();
   const prepared=await serverPlugins.prepare({session,cwd,request:{source:'terminal'},run:{messageId:randomUUID()},kind:'terminal'});
   if(!prepared.configDir){
    const pause=pauseDefaultProbes();
@@ -233,6 +264,7 @@ export async function createWorkbench(options={}){
    // Long sessions move older records out of the live window instead of refusing new turns.
    // This runs before the preflight snapshot, so a failed start never restores moved records.
    await store.trimHistory(s).catch(()=>console.error('Session history trim failed'));
+   await envAuditor.assertSafeBeforeRun();
    const cwd=path.join(workspaceRoot,s.id);
    const extensionOptions=await serverPlugins.prepare({session:s,cwd,request:{...request,text},run});
    if(run.cancelRequested||shuttingDown)throw new PluginError(409,'任务启动已取消。');
@@ -351,6 +383,7 @@ export async function createWorkbench(options={}){
  app.use((err,req,res,next)=>{if(res.headersSent)return next(err);const status=err.type==='entity.too.large'?413:err instanceof SyntaxError?400:err.status>=400&&err.status<500?err.status:500;send(res,status,status===500?'服务暂时无法完成请求。':err.status?err.message:'请求内容无效或过大。');});
  async function warmup(){
   if(shuttingDown)return;
+  void envAuditor.check().catch(()=>{});
   const account=await checkDefaultAuth({wait:true}).catch(()=>null);
   if(account?.loggedIn!==false)await refreshDefaultUsage().catch(()=>{});
   if(account?.loggedIn===true)await syncModels({version:account.version});
@@ -362,13 +395,13 @@ export async function createWorkbench(options={}){
   for(const [,r] of pending)r.cancelRequested=true;
   for(const [id,r] of pending){try{await serverPlugins.stop({session:store.get(id),run:r,reason:'shutdown'});}finally{r.handle?.stop();}}
   clearInterval(tick);if(usageEventTimer){clearTimeout(usageEventTimer);usageEventTimer=null;}for(const t of [...notices.values(),...legacyNotices.values()])clearTimeout(t);
-  feed.close();await terminals.close();
+  feed.close();await Promise.allSettled([terminals.close(),envAuditor.close()]);
   await Promise.allSettled(pending.map(([,r])=>r.done));
   await Promise.allSettled([...modelSyncInFlight.values(),defaultProbes]);
   await serverPlugins.close();await usage.close();for(const c of clients)c.res.end();await store.flush();
  }
  await serverPlugins.init();
- return {app,store,auth,runs,terminals,usage,monitor,plugins,serverPlugins,catalog,syncModels,pauseDefaultProbes,warmup,close};
+ return {app,store,auth,runs,terminals,usage,monitor,plugins,serverPlugins,envAuditor,catalog,syncModels,pauseDefaultProbes,warmup,close};
 }
 if(process.argv[1]&&await fs.realpath(process.argv[1]).catch(()=>null)===fileURLToPath(import.meta.url)){
  process.on('unhandledRejection',reason=>console.error('Unhandled promise rejection:',reason instanceof Error?reason.stack||reason.message:reason));

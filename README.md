@@ -168,6 +168,14 @@ Claude 还在干活时也能补充要求或纠正方向：点「引导」或按 
 
 </td>
 </tr>
+<tr>
+<td colspan="2" valign="top">
+
+**🛡️ 环境安全检测（24 项防封审计）**<br>
+顶栏常驻与 `/env` 一键核验出口 IP、多源一致性、官方支持地区、系统时区、IPv6/DNS/WebRTC、ASN 机房属性、CF WARP 标记、TLS 证书链完整性（防 MITM 解密）、QUIC 旁路、NTP 时钟、环境变量纯净度与凭据目录 `0600` 隔离；支持开启高危异常物理阻断（Fail-Closed）与后台漂移巡检。
+
+</td>
+</tr>
 </table>
 
 ## 截图

@@ -1,5 +1,19 @@
 # 验证记录
 
+## 1.8.0
+
+验证日期：2026-11-16。底座升级到 1.8.0，新增内置「环境安全检测（24 项 Claude 防封审计）」模块（`lib/env-audit.mjs`），插件目录保持不变。
+
+底座变更：
+- 24 项防封环境检测矩阵：融合经典 14 项基础链路审计（代理内核、TUN 网卡、出口 IP、多源 IP 一致性、系统时区匹配、官方支持地区、IPv6 双栈旁路/沙箱、DNS 污染与 Fake-IP 识别、WebRTC 公网候选、保镖状态、路由规则置顶、客户端语言、ASN 机房/运营商属性、生态可达性）与 GitHub / 社区高频封号 10 项深度审计（Cloudflare `warp=on/plus` 共享池标记、TLS 证书链与防 MITM 解密、QUIC `UDP 443` 旁路防护、NTP 时钟同步、环境变量与 `settings.json` 纯净度、官方 CLI 二进制校验、凭据目录 `0600` 隔离、OAuth Refresh Token 并发锁保护、24h 出口跳变与密度、并行防刷保护），智能区分海外原生直连与本地代理模式。
+- 可选保镖强拦截（Fail-Closed）与后台漂移巡检：支持开启 `blockOnCritical` 在高危异常下物理拦截 `POST /api/sessions/:id/messages` 与原生 Claude 终端 `POST /api/terminals`（返回 `409`）；非致命警告支持知悉豁免（`mutedChecks`），状态以 `0600` 原子持久化至 `<dataDir>/env-audit.json`；前端提供顶栏胶囊、独立审计弹窗、运行监控卡片与 `/env` 命令。
+
+### 已完成
+
+- `npm test`：250 项测试（macOS 248 项通过，2 项 Linux subreaper 专属测试跳过；Linux 全量 250/250 通过），新增 `test/env-audit.test.mjs`。
+- `npm run build` & `npm run workshop:build -- --check`：通过（7 个插件、2 款皮肤一致）。
+- `npm audit --omit=dev`：0 漏洞。
+
 ## 1.7.1
 
 验证日期：2026-11-13。底座升级到 1.7.1，内置插件「多账号轮询」升级到 1.3.1，其余插件未改动。
